@@ -280,6 +280,33 @@ def _save_anomaly_plot(y_data, result, target_col, out_dir):
     fig.write_html(str(Path(out_dir) / "anomaly_detection.html"))
 
 
+def _save_counterfactual_plot(y_hist, baseline, counterfactual, changes, out_dir):
+    import plotly.graph_objects as go
+    fig = go.Figure()
+    n = len(y_hist)
+    fig.add_trace(go.Scatter(
+        x=list(range(max(0, n - 100), n)), y=y_hist[-100:].tolist(),
+        mode="lines", name="Historical", line=dict(color="black", width=1.5),
+    ))
+    fx = list(range(n, n + len(baseline)))
+    fig.add_trace(go.Scatter(
+        x=fx, y=baseline, mode="lines", name="Baseline",
+        line=dict(color="blue", width=2),
+    ))
+    fig.add_trace(go.Scatter(
+        x=fx, y=counterfactual, mode="lines", name="Counterfactual",
+        line=dict(color="red", width=2, dash="dash"),
+    ))
+    fig.add_vline(x=n, line_dash="dot", line_color="gray")
+    label = ", ".join(f"{k}: {v:+g}" for k, v in changes.items())
+    fig.update_layout(
+        title=f"Counterfactual: {label}",
+        xaxis_title="Time Step", yaxis_title="Value",
+        template="plotly_white", height=500,
+    )
+    fig.write_html(str(Path(out_dir) / "counterfactual.html"))
+
+
 # ---------------------------------------------------------------------------
 # Tool factory
 # ---------------------------------------------------------------------------
@@ -405,14 +432,6 @@ def create_agent_tools(
         tmpl = MODEL_TEMPLATES.get(model_name)
         if not tmpl:
             return json.dumps({"error": f"Unknown model: {model_name}"})
-
-        # Check multivariate compatibility
-        if bool(feat_cols) and X is not None:
-            if not tmpl["supports_multivariate"]:
-                return json.dumps({
-                    "error": f"{model_name} does not support multivariate forecasting. "
-                            f"Use RandomForest or LightGBM for multivariate."
-                })
 
         is_mv = (
             bool(feat_cols)
@@ -672,7 +691,6 @@ def create_agent_tools(
             }
 
         fc["explainability"] = explain_out
-        print(fc)
         return json.dumps(fc)
 
     # ===== TOOL 4: Ensemble Strategy =====
@@ -794,7 +812,7 @@ def create_agent_tools(
 
         return json.dumps({
             "n_predictions": len(preds),
-            "predictions_preview": [round(v, 2) for v in preds[:10]],
+            "predictions": [round(v, 2) for v in preds],
             "strategy": strat["strategy_type"],
             "models_used": strat["selected_models"],
             "weights": strat["model_weights"],
@@ -861,6 +879,31 @@ def create_agent_tools(
             "method_agreement": compute_method_agreement(anom["method_counts"], 7),
             "percentiles": compute_percentile_context(series, a_vals) if a_vals else {},
         }
+
+        # Context snapshots: 5 surrounding values of target + features around anomalies
+        anomaly_indices = np.where(labels == -1)[0]
+        snapshots = []
+        # Sample up to 10 anomalies for context
+        sample_idx = anomaly_indices[:10] if len(anomaly_indices) > 10 else anomaly_indices
+        for ai in sample_idx:
+            lo = max(0, ai - 2)
+            hi = min(len(y), ai + 3)
+            snap = {
+                "anomaly_index": int(ai),
+                "anomaly_value": round(float(y[ai]), 3),
+                "target_window": [round(float(y[j]), 3) for j in range(lo, hi)],
+            }
+            if feat_cols and X is not None and ai < len(X):
+                feat_window = {}
+                for fc_idx, fc_name in enumerate(feat_cols):
+                    feat_window[fc_name] = [
+                        round(float(X[j, fc_idx]), 3)
+                        for j in range(lo, min(hi, len(X)))
+                    ]
+                snap["feature_window"] = feat_window
+            snapshots.append(snap)
+        exp["context_snapshots"] = snapshots
+
         session["anomaly_explanation"] = exp
         return json.dumps(exp, default=str)
 
@@ -938,6 +981,258 @@ def create_agent_tools(
         session["report"] = report
         return report
 
+    # ===== TOOL 9: Counterfactual Forward (What-If) =====
+    @tool
+    def counterfactual_forward(changes_json: str, horizon: int) -> str:
+        """What-if scenario: forecast target under modified feature values.
+
+        Example: "What if temperature drops by 5 degrees?"
+        Steps:
+        1. Forecast each modified feature as univariate to get future values
+        2. Apply the delta (e.g. -5) to those forecasted values
+        3. Forecast other features as univariate (unchanged)
+        4. Use multivariate model (best from session) with modified features
+
+        Args:
+            changes_json: JSON dict of feature deltas, e.g. '{"air_temperature": -5}'
+            horizon: Number of time steps to forecast
+
+        Returns:
+            JSON with baseline_forecast, counterfactual_forecast, deltas, feature_changes
+        """
+        changes = json.loads(changes_json)
+        if not feat_cols or X is None:
+            return json.dumps({"error": "No feature columns configured. Counterfactual requires multivariate."})
+
+        # Pick best multivariate model from session, or default to LightGBM
+        best_mv = None
+        best_mape = float("inf")
+        for name, res in session.get("model_results", {}).items():
+            if res.get("is_multivariate") and res["mean_mape"] < best_mape:
+                best_mv, best_mape = name, res["mean_mape"]
+        if best_mv is None:
+            best_mv = "LightGBM"
+
+        # --- Step 1: Forecast each feature as univariate using ARIMA ---
+        future_features = {}
+        for col in feat_cols:
+            col_data = df[col].dropna().values.astype(float)
+            try:
+                r = json.loads(uni_tools["ARIMA"].invoke({
+                    "train_data": json.dumps(col_data.tolist()),
+                    "horizon": horizon,
+                }))
+                future_features[col] = np.array(r["predictions"])
+            except Exception:
+                # Fallback: repeat last value
+                future_features[col] = np.full(horizon, col_data[-1])
+
+        # --- Step 2: Build baseline and counterfactual feature matrices ---
+        baseline_X = np.column_stack([future_features[c] for c in feat_cols])
+        cf_X = baseline_X.copy()
+        applied_changes = {}
+        for col, delta in changes.items():
+            if col in feat_cols:
+                idx = feat_cols.index(col)
+                cf_X[:, idx] = cf_X[:, idx] + delta
+                applied_changes[col] = {
+                    "delta": delta,
+                    "baseline_mean": round(float(baseline_X[:, idx].mean()), 2),
+                    "modified_mean": round(float(cf_X[:, idx].mean()), 2),
+                }
+
+        # --- Step 3: Get baseline and counterfactual predictions ---
+        mv_tool = mv_tools[best_mv]
+        bp = session.get("model_results", {}).get(best_mv, {}).get("best_params", {})
+        base_args = {
+            "train_features": json.dumps(X.tolist()),
+            "train_target": json.dumps(y_mv.tolist()),
+            "test_features": json.dumps(baseline_X.tolist()),
+            "horizon": horizon,
+            **{k: v for k, v in bp.items() if k != "n_lags"},
+        }
+        cf_args = {**base_args, "test_features": json.dumps(cf_X.tolist())}
+
+        try:
+            baseline_r = json.loads(mv_tool.invoke(base_args))
+            cf_r = json.loads(mv_tool.invoke(cf_args))
+        except Exception as e:
+            return json.dumps({"error": f"Forecast failed: {e}"})
+
+        baseline_preds = baseline_r["predictions"]
+        cf_preds = cf_r["predictions"]
+        deltas = [round(c - b, 2) for b, c in zip(baseline_preds, cf_preds)]
+
+        session["counterfactual_result"] = {
+            "type": "forward",
+            "baseline": baseline_preds,
+            "counterfactual": cf_preds,
+            "changes": applied_changes,
+            "model": best_mv,
+        }
+
+        # Save comparison plot
+        _save_counterfactual_plot(y, baseline_preds, cf_preds, changes, output_dir)
+
+        return json.dumps({
+            "model": best_mv,
+            "baseline_mean": round(float(np.mean(baseline_preds)), 2),
+            "counterfactual_mean": round(float(np.mean(cf_preds)), 2),
+            "mean_impact": round(float(np.mean(deltas)), 2),
+            "max_impact": round(float(np.max(np.abs(deltas))), 2),
+            "feature_changes": applied_changes,
+            "preview_baseline": [round(v, 2) for v in baseline_preds[:5]],
+            "preview_counterfactual": [round(v, 2) for v in cf_preds[:5]],
+        })
+
+    # ===== TOOL 10: Counterfactual Inverse (Target-Seeking) =====
+    @tool
+    def counterfactual_inverse(target_value: float, constraints_json: str = "{}") -> str:
+        """Find feature changes needed to reach a target value.
+
+        Example: "I want energy consumption to go down to 200"
+        Uses Nelder-Mead optimization on the top features by SHAP/FI.
+
+        Args:
+            target_value: Desired target value to reach
+            constraints_json: JSON dict of bounds, e.g. '{"air_temperature": [0, 45]}'
+                Each value is [min, max]. Use null for unbounded.
+
+        Returns:
+            JSON with required feature changes, predicted value, optimization success
+        """
+        from scipy.optimize import minimize
+
+        constraints = json.loads(constraints_json)
+        if not feat_cols or X is None:
+            return json.dumps({"error": "No feature columns configured."})
+
+        # Pick best multivariate model
+        best_mv = None
+        best_mape = float("inf")
+        for name, res in session.get("model_results", {}).items():
+            if res.get("is_multivariate") and res["mean_mape"] < best_mape:
+                best_mv, best_mape = name, res["mean_mape"]
+        if best_mv is None:
+            best_mv = "LightGBM"
+
+        bp = session.get("model_results", {}).get(best_mv, {}).get("best_params", {})
+
+        # Get feature importance to pick top features
+        explanations = session.get("model_explanations", {})
+        fi_pct = {}
+        for name, exp in explanations.items():
+            fi = exp.get("feature_importance_pct", {})
+            if fi:
+                fi_pct = fi
+                break
+        if not fi_pct:
+            # Fallback: use all features equally
+            fi_pct = {c: 100.0 / len(feat_cols) for c in feat_cols}
+
+        # Top 3 features by importance
+        sorted_feats = sorted(fi_pct.items(), key=lambda x: -x[1])
+        top_feats = [f for f, _ in sorted_feats if f in feat_cols][:3]
+        top_indices = [feat_cols.index(f) for f in top_feats]
+
+        # Current feature means (last 24 points as reference)
+        ref_window = min(24, len(X))
+        current_means = X[-ref_window:].mean(axis=0)
+
+        # Build bounds: default to historical min/max, override with user constraints
+        bounds = []
+        for f, idx in zip(top_feats, top_indices):
+            hist_lo = float(X[:, idx].min())
+            hist_hi = float(X[:, idx].max())
+            if f in constraints:
+                lo, hi = constraints[f]
+                lo = lo if lo is not None else hist_lo
+                hi = hi if hi is not None else hist_hi
+            else:
+                lo, hi = hist_lo, hist_hi
+            bounds.append((lo, hi))
+
+        # Train a quick model for fast objective evaluation
+        if best_mv == "LightGBM":
+            import lightgbm as lgb
+            mdl = lgb.LGBMRegressor(
+                num_leaves=bp.get("num_leaves", 31),
+                learning_rate=bp.get("learning_rate", 0.1),
+                n_estimators=bp.get("n_estimators", 100),
+                random_state=42, verbose=-1,
+            )
+        else:
+            from sklearn.ensemble import RandomForestRegressor
+            mdl = RandomForestRegressor(
+                n_estimators=bp.get("n_estimators", 100),
+                max_depth=bp.get("max_depth", 10),
+                random_state=42, n_jobs=-1,
+            )
+        X_df = pd.DataFrame(X, columns=feat_cols)
+        mdl.fit(X_df, y_mv)
+
+        # Objective: minimize (predicted - target)^2
+        def objective(params):
+            test_row = current_means.copy()
+            for p, idx in zip(params, top_indices):
+                test_row[idx] = p
+            row_df = pd.DataFrame([test_row], columns=feat_cols)
+            pred = mdl.predict(row_df)[0]
+            return (pred - target_value) ** 2
+
+        # Initial guess: current means for the top features
+        x0 = np.array([current_means[idx] for idx in top_indices])
+
+        result = minimize(
+            objective, x0, method="Nelder-Mead",
+            options={"maxiter": 500, "xatol": 0.01, "fatol": 0.01},
+        )
+
+        # Clip to bounds
+        optimized = result.x.copy()
+        for i, (lo, hi) in enumerate(bounds):
+            optimized[i] = np.clip(optimized[i], lo, hi)
+
+        # Evaluate final prediction
+        final_row = current_means.copy()
+        for val, idx in zip(optimized, top_indices):
+            final_row[idx] = val
+        final_pred = mdl.predict(pd.DataFrame([final_row], columns=feat_cols))[0]
+
+        # Compute current prediction for comparison
+        current_pred = mdl.predict(pd.DataFrame([current_means], columns=feat_cols))[0]
+
+        # Build result
+        feature_recommendations = {}
+        for f, idx, opt_val, (lo, hi) in zip(top_feats, top_indices, optimized, bounds):
+            curr = current_means[idx]
+            feature_recommendations[f] = {
+                "current": round(float(curr), 2),
+                "recommended": round(float(opt_val), 2),
+                "change": round(float(opt_val - curr), 2),
+                "change_pct": round(float((opt_val - curr) / max(abs(curr), 0.01) * 100), 1),
+                "bounds": [round(lo, 2), round(hi, 2)],
+                "fi_pct": fi_pct.get(f, 0),
+            }
+
+        session["counterfactual_result"] = {
+            "type": "inverse",
+            "target": target_value,
+            "predicted": float(final_pred),
+            "recommendations": feature_recommendations,
+            "model": best_mv,
+        }
+
+        return json.dumps({
+            "model": best_mv,
+            "target_value": target_value,
+            "current_predicted": round(float(current_pred), 2),
+            "optimized_predicted": round(float(final_pred), 2),
+            "gap": round(float(abs(final_pred - target_value)), 2),
+            "converged": bool(result.success),
+            "feature_recommendations": feature_recommendations,
+        })
+
     return [
         profile_dataset,
         train_forecast_model,
@@ -947,4 +1242,6 @@ def create_agent_tools(
         detect_anomalies,
         explain_anomalies,
         generate_report,
+        counterfactual_forward,
+        counterfactual_inverse,
     ], session

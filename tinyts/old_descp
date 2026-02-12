@@ -1,0 +1,66 @@
+
+3.1 SYSTEM ARCHITECTURE
+XYZ implements a tool-calling agent architecture that combines large language model reasoning
+with specialized time series analysis tools through a human-in-the-loop workflow (Figure [STUB:
+architecture diagram]). The system leverages native LLM tool-calling for flexible reasoning and
+dynamic tool selection conditioned on task context. It operates in two phases: (1) Planning, where
+dataset profiling and LLM-based query understanding generate a structured UserTaskPlan pre-
+sented for user approval, and (2) Execution, where the LLM agent iteratively selects and invokes
+tools based on the approved plan, using intermediate outputs to guide subsequent decisions.
+Phase 1: Planning and Human Approval
+3.1.1 DATA PROFILING.
+An automated profiler analyzes temporal properties (frequency inference, date range validation),
+statistical characteristics (mean, standard deviation, min, max, missing value percentage), station-
+arity (Augmented Dickey–Fuller and KPSS tests), seasonality (autocorrelation analysis and STL
+decomposition), and outliers (IQR-based flagging). The profiler produces a DataProfile object
+containing summary statistics only; raw data are never exposed to the LLM, ensuring scalability and
+preventing data hallucination.
+3.1.2 QUERY UNDERSTANDING.
+Users submit natural language queries (e.g., forecasting future consumption or detecting anoma-
+lies). A low-temperature LLM (temperature=0.1) extracts structured task specifications including
+task type (forecast, anomaly, or both), forecast horizon (in time steps), univariate or multivariate
+mode, selected feature columns, cross-validation requirements, and explainability/reporting needs.
+The LLM receives only data profile statistics (e.g., frequency, seasonality period, trend indicators,
+stationarity p-values) as context. The resulting plan is validated using a Pydantic UserTaskPlan
+schema and presented for user approval via Streamlit UI or CLI
+3.1.3 HUMAN APPROVAL GATE.
+Users may modify task configuration (type, horizon, multivariate settings), override model selection,
+enable or disable cross-validation, explainability, and reporting, and adjust feature columns. This ap-
+proval mechanism preserves domain expert control while mitigating reliability concerns associated
+with fully autonomous LLM agents in critical forecasting applications.
+Phase 2: Tool-Calling Execution
+After approval, the agent enters an iterative tool-calling loop (maximum 25 steps).
+3.1.4 MODEL TRAINING TOOLS.
+Model selection depends on task characteristics. Univariate models include Naive, Seasonal Naive,
+ARIMA (via pmdarima auto arima), ETS, N-BEATS, and TinyTimeMixer. Random For-
+est and LightGBM support both univariate (autoregressive) and multivariate (exogenous feature)
+modes. Models are trained using train forecast model(model name, horizon) with
+rolling-origin cross-validation (minimum training size max(50, 2× horizon), adaptive step size),
+grid-search hyperparameter tuning, and validation metrics (MAPE, RMSE, MAE) reported as mean
+and standard deviation across folds. The agent receives structured validation outputs and may itera-
+tively refine model selection.
+3.1.5 ENSEMBLE STRATEGY SELECTION AND FORECAST COMBINATION.
+After training, select ensemble strategy() evaluates inverse-error weighting (wi =
+1/MAPEiP
+j 1/MAPEj ), softmax weighting (wi = exp(−MAPEi)P
+j exp(−MAPEj ) ), and best-model selection as fallback.
+The chosen strategy and rationale are returned to the agent. Final predictions are generated using
+combine forecasts(), which produces weighted averages for multi-model ensembles or di-
+rect outputs for single-model strategies, and saves Plotly visualizations including historical data,
+forecasts, and per-model predictions.
+3.1.6 ANOMALY DETECTION.
+For anomaly tasks, detect anomalies() applies a 7-method ensemble comprising statistical
+(Z-score, Modified Z-score using MAD, rolling statistics), distribution-based (IQR, STL residuals),
+and machine learning methods (Isolation Forest, DBSCAN). Majority voting (≥ 3 methods) flags
+anomalies, and per-method agreement scores are returned to support transparency.
+3.1.7 EXPLAINABILITY TOOLS.
+When explanation is requested, the agent invokes tools that compute statistical summaries (recent
+trend, 7-day and 1-day averages, comparison to training mean), STL-derived trend and seasonal
+strength with residual variance, lag autocorrelations (lags 1, 6, 12, 24), multivariate feature attri-
+bution (SHAP values and tree-based feature importance), and Pearson feature correlations with the
+target variable. Explanations are synthesized directly from computed numerical outputs, grounding
+responses in metrics rather than inferred values.
+3.1.8 REPORT GENERATION.
+The generate report() tool aggregates all outputs into a structured report containing the data
+profile summary, model performance comparison (MAPE, RMSE, MAE per model), ensemble strat-
+egy justification, forecast visualizations, and explainability insights when requested

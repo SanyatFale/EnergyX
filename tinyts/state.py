@@ -92,6 +92,7 @@ class UserTaskPlan(BaseModel):
 
     Produced by QueryUnderstandingNode, editable by user in Streamlit UI.
     """
+    model_config = {"extra": "ignore"}  # Tolerate unknown fields from LLM JSON
 
     user_query: str
     task_type: str  # "forecast", "anomaly", "both"
@@ -105,7 +106,16 @@ class UserTaskPlan(BaseModel):
     needs_explanation: bool = False
     needs_report: bool = False
     needs_plots: bool = True
-    reasoning: str = ""  # LLM's interpretation of the query
+    explanation: str = ""  # LLM's interpretation of the query
+
+    # Counterfactual analysis
+    counterfactual_type: Optional[str] = None  # "forward" | "inverse" | None
+    counterfactual_changes: Dict[str, float] = Field(default_factory=dict)
+    # Forward: {"air_temperature": -5} means "drop temp by 5"
+    counterfactual_target_value: Optional[float] = None
+    # Inverse: desired target value
+    counterfactual_constraints: Dict[str, List[float]] = Field(default_factory=dict)
+    # Inverse: {"air_temperature": [0, 45]} means min=0, max=45
 
 
 class ReasoningOutput(BaseModel):

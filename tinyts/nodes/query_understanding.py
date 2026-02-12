@@ -45,7 +45,11 @@ Return ONLY a valid JSON object (no markdown, no comments, no explanation) with 
   "needs_explanation": false,
   "needs_report": false,
   "needs_plots": true,
-  "reasoning": "<1 sentence>"
+  "explanation": "<1 sentence>",
+  "counterfactual_type": null,
+  "counterfactual_changes": {{}},
+  "counterfactual_target_value": null,
+  "counterfactual_constraints": {{}}
 }}
 
 RULES:
@@ -55,7 +59,18 @@ RULES:
 - UNIVARIATE models: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS, TinyTimeMixer
 - MULTIVARIATE models (require features): RandomForest, LightGBM
 - If is_multivariate=true, ONLY include RandomForest/LightGBM in models_included
-- If is_multivariate=false, ONLY include univariate models in models_included"""
+- If is_multivariate=false, ONLY include univariate models in models_included
+
+COUNTERFACTUAL RULES:
+- If user says "what if X drops/increases by N" or "if X changes to N":
+  Set counterfactual_type="forward", counterfactual_changes={{"X": delta}} (negative for drops).
+  MUST set is_multivariate=true with RandomForest/LightGBM. Include X in feature_columns.
+- If user says "I want target to reach/go to X" or "reduce target to X":
+  Set counterfactual_type="inverse", counterfactual_target_value=X.
+  MUST set is_multivariate=true with RandomForest/LightGBM.
+- If user specifies constraints like "temperature can't go below 25":
+  Set counterfactual_constraints={{"temperature": [25, null]}} (null=unbounded).
+- If no counterfactual intent, leave all counterfactual fields as null/empty."""
 
 
 def _extract_json(text: str) -> Optional[dict]:
@@ -225,6 +240,26 @@ class QueryUnderstandingNode(BaseNode):
             if profile.has_seasonality:
                 models.insert(1, "SeasonalNaive")
 
+        # Detect counterfactual intent
+        cf_type = None
+        cf_changes = {}
+        cf_target = None
+        cf_constraints = {}
+        if any(w in query_lower for w in ["what if", "what-if", "if the", "drops by", "increases by"]):
+            cf_type = "forward"
+            is_multivariate = True
+            feature_cols = [c for c in profile.numeric_columns if c != profile.target_column]
+            models = ["RandomForest", "LightGBM"]
+        elif any(w in query_lower for w in ["want it to", "reach", "reduce to", "go down to", "go to"]):
+            cf_type = "inverse"
+            is_multivariate = True
+            feature_cols = [c for c in profile.numeric_columns if c != profile.target_column]
+            models = ["RandomForest", "LightGBM"]
+            # Try to extract target value
+            val_match = _re.search(r"to\s+(\d+\.?\d*)", query_lower)
+            if val_match:
+                cf_target = float(val_match.group(1))
+
         return UserTaskPlan(
             user_query=query,
             task_type=task_type,
@@ -238,5 +273,9 @@ class QueryUnderstandingNode(BaseNode):
             needs_explanation="explain" in query_lower or "why" in query_lower,
             needs_report="report" in query_lower,
             needs_plots=True,
-            reasoning="Fallback plan: heuristic intent detection.",
+            explanation="Fallback plan: heuristic intent detection.",
+            counterfactual_type=cf_type,
+            counterfactual_changes=cf_changes,
+            counterfactual_target_value=cf_target,
+            counterfactual_constraints=cf_constraints,
         )

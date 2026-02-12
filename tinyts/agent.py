@@ -8,13 +8,14 @@ Two phases:
 
 import json
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from langchain_core.messages import (
-    HumanMessage, SystemMessage, ToolMessage,
+    AIMessage, HumanMessage, SystemMessage, ToolMessage,
 )
 
 from tinyts.agent_tools import create_agent_tools
@@ -23,67 +24,97 @@ from tinyts.state import UserTaskPlan
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are TinyTS-Scientist, an expert time series analysis agent.
+BASE_PROMPT = """You are TinyTS-Scientist, an expert time series analysis agent.
 
-You have these tools:
-1. profile_dataset() — Profile the dataset (call FIRST, no args)
-2. train_forecast_model(model_name, horizon) — Train one model with CV
-3. train_and_explain_forecast(model_name, horizon) — Train + compute SHAP/FI/decomposition
-4. select_ensemble_strategy() — Compute ensemble weights from all trained models
-5. combine_forecasts() — Combine predictions using ensemble strategy
-6. detect_anomalies() — Run 7-method anomaly ensemble
-7. explain_anomalies() — Explain anomaly detection results
-8. generate_report() — Generate analysis report
+PROTOCOL:
+- Call ONE tool per response. No text, just the tool call.
+- Wait for the result, then decide the next tool.
+- After ALL tools are done, provide your analysis.
 
-AVAILABLE MODELS:
-- UNIVARIATE: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS, TinyTimeMixer
-- MULTIVARIATE (requires features): RandomForest, LightGBM
+TOOLS:
+- profile_dataset() — Profile dataset (call first)
+- train_forecast_model(model_name, horizon) — Train one model
+- train_and_explain_forecast(model_name, horizon) — Train + SHAP/FI
+- combine_forecasts() — Combine trained models (call after training all)
+- detect_anomalies() — Anomaly ensemble
+- explain_anomalies() — Explain anomalies (after detect)
+- generate_report() — Generate report (call last)
+- counterfactual_forward(changes_json, horizon) — What-if forecast
+- counterfactual_inverse(target_value, constraints_json) — Reach target
 
-CRITICAL TOOL-CALLING PROTOCOL:
-1. Call EXACTLY ONE tool per response - NEVER multiple tools
-2. Do NOT add ANY text when calling a tool - just the tool call
-3. Do NOT add extra arguments - tools have fixed signatures
-4. Only provide analysis AFTER all tools finish (no more tool_calls)
+MODELS: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS, TinyTimeMixer | RandomForest, LightGBM (multivariate)
+"""
 
-WORKFLOW:
-- FORECASTING: train models → combine_forecasts() → (optional) generate_report()
-- ANOMALY: detect_anomalies() → (optional) explain_anomalies() → (optional) generate_report()
+FORECAST_WORKFLOW = """
+TASK: Train each model in the list one at a time, then combine.
+Models to train: {models}
+Use: {tool_name}(model_name=<name>, horizon={horizon})
+After all models trained, call combine_forecasts().
+Then STOP and output:
+1. FIRST: A markdown table of first 10 predicted values from combine_forecasts (step | value), mention it as preview.
+2. THEN: Each model's MAPE, ensemble weights, which model won and why.
+"""
 
-FINAL SUMMARY (only when NO MORE TOOLS to call):
-Provide a concise summary citing actual numbers from tool results.
+FORECAST_EXPLAIN_WORKFLOW = """
+TASK: Train each model with explanations, then combine.
+Models to train: {models}
+Use: train_and_explain_forecast(model_name=<name>, horizon={horizon})
+After all models trained, call combine_forecasts().
+Then STOP and output:
+1. FIRST: A markdown table of ALL predicted values from combine_forecasts (step | value)
+2. THEN grounded analysis using ALL returned metrics:
+- Model comparison (MAPE, std) — which won and why
+- Feature drivers: cite exact FI% and SHAP% — explain what each feature DOES practically (e.g. "air_temperature FI=35% means temperature is the strongest predictor of energy use")
+- Lag structure: interpret lags as real-world patterns:
+  * lag_1 high → strong momentum / persistence (recent values predict next)
+  * lag_24 high → daily repeating pattern (e.g. daily consumption cycle)
+  * lag_168 high → weekly pattern (e.g. weekday vs weekend)
+  * lag_1 negative → mean-reverting (spikes tend to correct)
+- Decomposition: trend direction, seasonal strength, residual noise
+- Correlations: which features directly drive target vs non-linear effects. If correlation=0 but FI>0, explain this means the feature matters but through complex interactions, not simple linear relationship
+Write for both experts (cite numbers) and non-experts (explain what it means in plain language).
+"""
 
-1. **Model Performance**: Table of each model's MAPE. Which won and why.
+ANOMALY_WORKFLOW = """
+TASK: Detect anomalies.
+Call detect_anomalies().
+Then STOP and report: total anomalies found, per-method counts, agreement level.
+"""
 
-2. **Ensemble Strategy Justification**: WHY weighted/best_model was chosen.
-   Justify based on: error variance across models, relative stability (std of CV scores),
-   model diversity (statistical vs tree vs neural), and whether combining helps.
+ANOMALY_EXPLAIN_WORKFLOW = """
+TASK: Detect and explain anomalies.
+Call detect_anomalies(), then explain_anomalies().
+Then STOP and provide grounded analysis. For EACH metric, cite the value AND infer what it means:
+- Method agreement: cite counts → infer if anomalies are clear-cut or borderline
+- Z-scores: cite values → infer severity (mild fluctuation vs extreme event)
+- IQR bounds: cite Q1/Q3/range → infer if anomalies are just outside normal or far beyond
+- Percentiles: cite values → infer how rare these events are
+- Context snapshots: compare target_window values before/during/after anomaly AND compare feature_window values → infer probable CAUSE (did a feature also spike/drop? or did only the target change while features stayed stable? if features changed too, which one correlates with the anomaly?)
+For each anomaly snapshot, write one sentence: "Anomaly at index X: target dropped from A to B while [feature] also dropped from C to D, suggesting [cause]" or "target spiked but features were stable, suggesting measurement error or external event."
+"""
 
-3. **Lag Structure Analysis** (from lag_contributions):
-   - Negative lag_1 → short-term mean reversion, volatile signal, naive forecast unstable
-   - Positive lag_1 → persistent series, momentum
-   - Weak seasonal lags (12, 24) → weak seasonality, tree models may struggle with cycles
-   - Strong seasonal lags → clear periodic pattern models can exploit
+COUNTERFACTUAL_FORWARD_WORKFLOW = """
+TASK: Train multivariate models, then run what-if scenario.
+Models to train: {models}
+Use: train_forecast_model(model_name=<name>, horizon={horizon})
+After training, call counterfactual_forward(changes_json='{changes_json}', horizon={horizon}).
+Then STOP and provide grounded analysis:
+- Baseline vs counterfactual forecast comparison (cite exact values)
+- Mean and max impact of the intervention
+- Practical interpretation: what this change means for the target variable
+- Confidence: cite model MAPE to contextualize prediction reliability
+"""
 
-4. **Decomposition Insights** (from trend_strength, seasonal_strength):
-   - trend_strength near 1 → strong trend, differencing helps
-   - seasonal_strength near 0 → weak seasonality, seasonal models add little
-   - Relate to model results: did seasonal models actually help?
-
-5. **Feature Reconciliation** (MUST reconcile FI, SHAP, and correlation together):
-   - High SHAP + positive correlation → strong direct driver
-   - Low correlation + moderate FI → non-linear effect the model captures
-   - FI high but SHAP small → feature used often in splits but low marginal effect
-   - Example interpretation: "air_temperature has FI=0.93 (dominant), SHAP=176
-     (high magnitude), but correlation=0.29 (moderate). This suggests a strong
-     but non-linear temperature-demand relationship."
-
-6. **Statistical Context** (from recent_trend, recent_7d_avg, recent_1d_avg):
-   - Is the series trending up/down recently?
-   - How does recent behavior compare to training mean?
-
-7. **Anomaly Summary** (if detect_anomalies was used):
-   - Count, method agreement levels, what anomalous values look like
-   - Which methods agreed most/least
+COUNTERFACTUAL_INVERSE_WORKFLOW = """
+TASK: Train multivariate models with explanations, then optimize for target {target}.
+Models to train: {models}
+Use: train_and_explain_forecast(model_name=<name>, horizon={horizon})
+After training, call counterfactual_inverse(target_value={target}, constraints_json='{constraints_json}').
+Then STOP and provide grounded analysis:
+- Current vs target vs optimized prediction (cite exact values)
+- Feature recommendations: current value, recommended value, change needed (cite %)
+- Feasibility: are changes within historical bounds? did optimizer converge?
+- Practical interpretation: what actions to take and expected outcome
 """
 
 
@@ -190,13 +221,15 @@ class TinyTSAgent:
         Returns:
             Dict with response, session, messages, output_dir
         """
+        # Build task-specific system prompt
+        system_prompt = self._build_system_prompt(plan)
         plan_text = self._plan_to_prompt(plan)
 
         llm = get_llm(temperature=settings.routing_temperature)
         llm_with_tools = llm.bind_tools(self.tools)
 
         messages = [
-            SystemMessage(content=SYSTEM_PROMPT),
+            SystemMessage(content=system_prompt),
             HumanMessage(content=plan_text),
         ]
 
@@ -213,13 +246,28 @@ class TinyTSAgent:
                 except Exception as e2:
                     return self._make_result(f"Agent failed: {e2}", messages)
 
+            # --- Format adapter: Cerebras sometimes outputs tool calls as text ---
+            tool_calls = response.tool_calls
+            fake_id = None
+
+            if not tool_calls and response.content:
+                parsed = self._parse_text_tool_call(response.content)
+                if parsed:
+                    fake_id = f"text_{step}"
+                    tool_calls = [{"name": parsed["name"], "args": parsed["args"], "id": fake_id}]
+                    # Replace response with a proper AIMessage containing the tool call
+                    response = AIMessage(
+                        content="",
+                        tool_calls=[{"name": parsed["name"], "args": parsed["args"], "id": fake_id}],
+                    )
+
             messages.append(response)
 
-            if not response.tool_calls:
+            if not tool_calls:
                 logger.info(f"Agent done in {step+1} steps")
                 break
 
-            for tc in response.tool_calls:
+            for tc in tool_calls:
                 name, args, tid = tc["name"], tc["args"], tc["id"]
                 logger.info(f"  Step {step}: {name}({args})")
 
@@ -227,10 +275,14 @@ class TinyTSAgent:
                 if fn is None:
                     res = json.dumps({"error": f"Unknown tool: {name}"})
                 else:
-                    try:
-                        res = fn.invoke(args)
-                    except Exception as e:
-                        res = json.dumps({"error": f"{name} failed: {e}"})
+                    validation_error = self._validate_tool_args(name, args)
+                    if validation_error:
+                        res = json.dumps({"error": validation_error})
+                    else:
+                        try:
+                            res = fn.invoke(args)
+                        except Exception as e:
+                            res = json.dumps({"error": f"{name} failed: {e}"})
 
                 messages.append(ToolMessage(content=res, tool_call_id=tid))
 
@@ -246,6 +298,101 @@ class TinyTSAgent:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Text-to-tool-call adapter
+    # ------------------------------------------------------------------
+    _TOOL_RE = re.compile(
+        r'\b(profile_dataset|train_forecast_model|train_and_explain_forecast|'
+        r'combine_forecasts|detect_anomalies|explain_anomalies|generate_report|'
+        r'counterfactual_forward|counterfactual_inverse|select_ensemble_strategy'
+        r')\s*\(([^)]*)\)'
+    )
+    _ARG_RE = re.compile(
+        r"(\w+)\s*=\s*("
+        r"'[^']*'"
+        r'|"[^"]*"'
+        r"|[^,)]+?"
+        r")\s*(?:,|$)"
+    )
+
+    def _parse_text_tool_call(self, text: str) -> Optional[dict]:
+        """Extract the first tool call from LLM text output."""
+        m = self._TOOL_RE.search(text)
+        if not m or m.group(1) not in self.tool_map:
+            return None
+        name = m.group(1)
+        raw_args = m.group(2).strip()
+        if not raw_args:
+            return {"name": name, "args": {}}
+        args = {}
+        for am in self._ARG_RE.finditer(raw_args):
+            k = am.group(1)
+            v = am.group(2).strip()
+            if (v.startswith("'") and v.endswith("'")) or (v.startswith('"') and v.endswith('"')):
+                v = v[1:-1]
+            else:
+                try:
+                    v = int(v)
+                except ValueError:
+                    try:
+                        v = float(v)
+                    except ValueError:
+                        pass
+            args[k] = v
+        logger.info(f"  Parsed text tool call: {name}({args})")
+        return {"name": name, "args": args}
+
+    def _validate_tool_args(self, tool_name: str, args: dict) -> Optional[str]:
+        """Validate tool arguments and return error message if invalid."""
+        required_args = {
+            "train_forecast_model": ["model_name", "horizon"],
+            "train_and_explain_forecast": ["model_name", "horizon"],
+            "counterfactual_forward": ["changes_json", "horizon"],
+            "counterfactual_inverse": ["target_value", "constraints_json"],
+        }
+
+        if tool_name not in required_args:
+            return None  # No validation needed
+
+        missing = [arg for arg in required_args[tool_name] if arg not in args or args[arg] is None]
+        if missing:
+            return f"{tool_name} requires arguments: {required_args[tool_name]}. Missing: {missing}. Example: {tool_name}({', '.join(f'{k}=<value>' for k in required_args[tool_name])})"
+
+        return None
+
+    def _build_system_prompt(self, plan: UserTaskPlan) -> str:
+        """Build task-specific system prompt — no step enumeration."""
+        tool_name = "train_and_explain_forecast" if plan.needs_explanation else "train_forecast_model"
+        models_str = ", ".join(plan.models_included)
+
+        if plan.counterfactual_type == "forward":
+            changes_str = json.dumps(plan.counterfactual_changes)
+            workflow = COUNTERFACTUAL_FORWARD_WORKFLOW.format(
+                models=models_str, horizon=plan.horizon,
+                changes_json=changes_str,
+            )
+        elif plan.counterfactual_type == "inverse":
+            constraints_str = json.dumps(plan.counterfactual_constraints) if plan.counterfactual_constraints else "{}"
+            workflow = COUNTERFACTUAL_INVERSE_WORKFLOW.format(
+                models=models_str, horizon=plan.horizon,
+                target=plan.counterfactual_target_value,
+                constraints_json=constraints_str,
+            )
+        elif plan.task_type == "anomaly":
+            workflow = ANOMALY_EXPLAIN_WORKFLOW if plan.needs_explanation else ANOMALY_WORKFLOW
+        else:
+            if plan.needs_explanation:
+                workflow = FORECAST_EXPLAIN_WORKFLOW.format(
+                    models=models_str, horizon=plan.horizon,
+                )
+            else:
+                workflow = FORECAST_WORKFLOW.format(
+                    models=models_str, tool_name=tool_name,
+                    horizon=plan.horizon,
+                )
+
+        return BASE_PROMPT + "\n" + workflow
+
     def _plan_to_prompt(self, plan: UserTaskPlan) -> str:
         lines = [
             "Execute this approved analysis plan:",
@@ -259,6 +406,16 @@ class TinyTSAgent:
             lines.append(f"- Models to train: {', '.join(plan.models_included)}")
         lines.append(f"- Needs explanation: {plan.needs_explanation}")
         lines.append(f"- Needs report: {plan.needs_report}")
+
+        if plan.counterfactual_type == "forward":
+            lines.append(f"- COUNTERFACTUAL FORWARD: changes={json.dumps(plan.counterfactual_changes)}")
+            lines.append("  → Train multivariate models first, then call counterfactual_forward()")
+        elif plan.counterfactual_type == "inverse":
+            lines.append(f"- COUNTERFACTUAL INVERSE: target_value={plan.counterfactual_target_value}")
+            if plan.counterfactual_constraints:
+                lines.append(f"  constraints={json.dumps(plan.counterfactual_constraints)}")
+            lines.append("  → Train multivariate models with explain first, then call counterfactual_inverse()")
+
         lines.append("")
         lines.append("The dataset is already profiled. Start executing now.")
         return "\n".join(lines)

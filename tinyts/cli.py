@@ -89,8 +89,8 @@ def run(
         console.print(f"  Explanation: {task_plan.needs_explanation}")
         console.print(f"  Report: {task_plan.needs_report}")
 
-        if task_plan.reasoning:
-            console.print(f"  Reasoning: {task_plan.reasoning}")
+        if task_plan.explanation:
+            console.print(f"  Explanation: {task_plan.explanation}")
 
         # Human approval
         if not auto_approve:
