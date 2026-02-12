@@ -17,6 +17,7 @@ from tinyts.state import AgentState, DataProfile, UserTaskPlan
 AVAILABLE_MODELS = [
     "Naive", "SeasonalNaive", "ARIMA", "ETS",
     "RandomForest", "LightGBM", "N-BEATS", "TinyTimeMixer",
+    "RandomForest", "LightGBM", "N-BEATS",
 ]
 
 QUERY_PROMPT_TEMPLATE = """You are a time series analysis assistant. Parse the user's request.
@@ -57,6 +58,7 @@ RULES:
 - Output raw JSON only. No ```json blocks. No comments. No trailing text.
 - Only set is_multivariate=true if user explicitly asks for it.
 - UNIVARIATE models: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS, TinyTimeMixer
+- UNIVARIATE models: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS
 - MULTIVARIATE models (require features): RandomForest, LightGBM
 - If is_multivariate=true, ONLY include RandomForest/LightGBM in models_included
 - If is_multivariate=false, ONLY include univariate models in models_included
