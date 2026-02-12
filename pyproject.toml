@@ -1,68 +1,71 @@
-[tool.poetry]
+[project]
 name = "tinyts-scientist"
 version = "0.1.0"
-description = "A Local, Human-in-the-Loop Agentic Time-Series System"
-authors = ["Your Name <you@example.com>"]
+description = "An agentic time-series forecasting and anomaly detection system with multi-layered explainability"
 readme = "README.md"
-packages = [{include = "tinyts"}]
+license = "MIT"
+requires-python = ">=3.10"
 
-[tool.poetry.dependencies]
-python = "^3.10"
-# LangChain ecosystem
-langchain = "^0.3.0"
-langchain-community = "^0.3.0"
-langgraph = "^0.2.0"
-langchain-ollama = "^0.2.0"
+dependencies = [
+    # LangChain ecosystem
+    "langchain>=0.3.0,<2.0",
+    "langchain-core>=0.3.0,<2.0",
+    "langchain-community>=0.3.0,<1.0",
+    "langchain-openai>=0.3.0,<2.0",
+    "langchain-ollama>=0.2.0,<2.0",
 
-# Time series libraries
-pandas = "^2.0.0"
-numpy = "^1.24.0"
-statsmodels = "^0.14.0"
-scikit-learn = "^1.3.0"
-lightgbm = "^4.0.0"
+    # Data & scientific computing
+    "numpy>=1.24.0,<3.0",
+    "pandas>=2.0.0,<3.0",
+    "scipy>=1.11.0,<2.0",
 
-# Neural models
-torch = "^2.0.0"
-tsfm-public = "^0.2.0"  # IBM Tiny Time Mixers
+    # Time series & statistics
+    "statsmodels>=0.14.0,<1.0",
+    "pmdarima>=2.0.0,<3.0",
 
-# Visualization
-matplotlib = "^3.7.0"
-seaborn = "^0.12.0"
-plotly = "^5.14.0"
+    # Machine learning
+    "scikit-learn>=1.3.0,<2.0",
+    "lightgbm>=4.0.0,<5.0",
 
-# Data handling
-pyarrow = "^12.0.0"
-fastparquet = "^2023.4.0"
+    # Explainability
+    "shap>=0.45.0,<1.0",
 
-# Utilities
-pydantic = "^2.0.0"
-pydantic-settings = "^2.0.0"
-python-dotenv = "^1.0.0"
-rich = "^13.0.0"
-typer = "^0.9.0"
+    # Neural models
+    "torch>=2.0.0",
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.0"
-pytest-cov = "^4.1.0"
-black = "^23.7.0"
-ruff = "^0.0.285"
-mypy = "^1.5.0"
+    # Visualization
+    "plotly>=5.14.0,<7.0",
+
+    # Web UI
+    "streamlit>=1.30.0,<2.0",
+
+    # Data models & configuration
+    "pydantic>=2.0.0,<3.0",
+    "pydantic-settings>=2.0.0,<3.0",
+    "python-dotenv>=1.0.0,<2.0",
+
+    # CLI
+    "rich>=13.0.0,<15.0",
+    "typer>=0.9.0,<1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+tinyts = "tinyts.cli:app"
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
 
-[tool.black]
-line-length = 100
-target-version = ['py310']
+[tool.setuptools.packages.find]
+include = ["tinyts*"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-
-[tool.mypy]
-python_version = "3.10"
-warn_return_any = true
-warn_unused_configs = true
-disallow_untyped_defs = false
-

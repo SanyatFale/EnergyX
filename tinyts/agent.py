@@ -42,7 +42,7 @@ TOOLS:
 - counterfactual_forward(changes_json, horizon) — What-if forecast
 - counterfactual_inverse(target_value, constraints_json) — Reach target
 
-MODELS: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS, TinyTimeMixer | RandomForest, LightGBM (multivariate)
+MODELS: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS (univariate) | RandomForest, LightGBM (multivariate)
 """
 
 FORECAST_WORKFLOW = """

@@ -1,90 +1,58 @@
 #!/bin/bash
-# Setup script for TinyTS-Scientist
+# TinyTS-Scientist — Setup Script
+# Usage: bash setup.sh
 
 set -e
 
-echo "🚀 TinyTS-Scientist Setup"
-echo "=========================="
+echo "TinyTS-Scientist Setup"
+echo "======================"
 echo ""
 
-# Check Python version
+# ── Check Python version ──────────────────────────────────────
 echo "Checking Python version..."
 python_version=$(python3 --version 2>&1 | awk '{print $2}')
-echo "✓ Found Python $python_version"
+major=$(echo "$python_version" | cut -d. -f1)
+minor=$(echo "$python_version" | cut -d. -f2)
+if [ "$major" -lt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -lt 10 ]; }; then
+    echo "ERROR: Python 3.10+ required (found $python_version)"
+    exit 1
+fi
+echo "  Found Python $python_version"
 echo ""
 
-# Create virtual environment
+# ── Create virtual environment ────────────────────────────────
 echo "Creating virtual environment..."
 if [ -d "venv" ]; then
-    echo "⚠️  Virtual environment already exists. Skipping creation."
+    echo "  Virtual environment already exists. Skipping."
 else
     python3 -m venv venv
-    echo "✓ Virtual environment created"
+    echo "  Created venv/"
 fi
 echo ""
 
-# Activate and install dependencies
+# ── Install dependencies ──────────────────────────────────────
 echo "Installing dependencies..."
-echo "This may take a few minutes..."
 source venv/bin/activate
-
-# Upgrade pip
-pip install --upgrade pip > /dev/null 2>&1
-
-# Install dependencies
-pip install -q langchain>=0.3.0 \
-    langchain-community>=0.3.0 \
-    langgraph>=0.2.0 \
-    langchain-ollama>=0.2.0 \
-    pandas>=2.0.0 \
-    numpy>=1.24.0 \
-    statsmodels>=0.14.0 \
-    scikit-learn>=1.3.0 \
-    lightgbm>=4.0.0 \
-    torch>=2.0.0 \
-    matplotlib>=3.7.0 \
-    seaborn>=0.12.0 \
-    plotly>=5.14.0 \
-    pyarrow>=12.0.0 \
-    fastparquet>=2023.4.0 \
-    pydantic>=2.0.0 \
-    pydantic-settings>=2.0.0 \
-    python-dotenv>=1.0.0 \
-    rich>=13.0.0 \
-    typer>=0.9.0
-
-echo "✓ Dependencies installed"
+pip install --upgrade pip -q
+pip install -r requirements.txt -q
+echo "  Dependencies installed."
 echo ""
 
-# Create .env file
+# ── Create .env from example ──────────────────────────────────
 if [ ! -f ".env" ]; then
-    echo "Creating .env file..."
     cp .env.example .env
-    echo "✓ .env file created"
+    echo "Created .env from .env.example"
+    echo "  Edit .env to set your CEREBRAS_API_KEY (or switch to Ollama)."
 else
-    echo "⚠️  .env file already exists. Skipping."
+    echo ".env already exists. Skipping."
 fi
 echo ""
 
-# Generate sample data
-echo "Generating sample data..."
-python examples/generate_sample_data.py
-echo "✓ Sample data generated"
-echo ""
-
-echo "✅ Setup complete!"
+# ── Done ──────────────────────────────────────────────────────
+echo "Setup complete."
 echo ""
 echo "Next steps:"
-echo "1. Activate the virtual environment:"
-echo "   source venv/bin/activate"
+echo "  1. source venv/bin/activate"
+echo "  2. Edit .env — set CEREBRAS_API_KEY or LLM_PROVIDER=ollama"
+echo "  3. streamlit run app.py"
 echo ""
-echo "2. Make sure Ollama is running:"
-echo "   ollama serve"
-echo ""
-echo "3. Pull the model (in another terminal):"
-echo "   ollama pull llama3.2:3b"
-echo ""
-echo "4. Run the example:"
-echo "   python examples/basic_usage.py"
-echo ""
-

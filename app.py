@@ -56,12 +56,12 @@ _DEFAULTS: Dict = {
         }
     ],
     "stage": "dataset_select",
-    "show_reasoning": False,
+    "show_explain": False,
     "agent": None,
     "task_plan": None,
-    "dataset_path": None,
-    "time_column": None,
-    "target_column": None,
+    "dataset_path": "data/raw/building_energy_data (copy 1)_elec.csv",
+    "time_column": "timestamp",
+    "target_column": "meter_reading",
     "feature_columns": [],
     "plan_approved": False,
 }
@@ -104,10 +104,16 @@ with st.sidebar:
     st.subheader("Dataset")
     upload = st.file_uploader("Upload CSV / Parquet", type=["csv", "parquet", "xlsx"])
     existing_files = _list_data_files()
+    # Default index: find default dataset in list, else 0 (blank)
+    _default_idx = 0
+    for _i, _f in enumerate(existing_files):
+        if "building_energy_data" in _f and "_elec" in _f:
+            _default_idx = _i + 1  # +1 for the leading ""
+            break
     selected_file = st.selectbox(
         "Or pick from data/",
         options=[""] + existing_files,
-        index=0,
+        index=_default_idx,
         format_func=lambda x: Path(x).name if x else "-- select --",
     )
 
@@ -131,8 +137,10 @@ with st.sidebar:
 
         if df_peek is not None:
             cols = list(df_peek.columns)
-            st.session_state.time_column = st.selectbox("Time column", options=cols, index=0)
-            target_idx = min(1, len(cols) - 1)
+            # Smart defaults: use session state if valid, else first col
+            time_idx = cols.index(st.session_state.time_column) if st.session_state.time_column in cols else 0
+            st.session_state.time_column = st.selectbox("Time column", options=cols, index=time_idx)
+            target_idx = cols.index(st.session_state.target_column) if st.session_state.target_column in cols else min(1, len(cols) - 1)
             st.session_state.target_column = st.selectbox(
                 "Target column", options=cols, index=target_idx
             )
@@ -149,12 +157,6 @@ with st.sidebar:
     # --- Stage indicator ---
     st.subheader("Pipeline Stage")
     st.info(st.session_state.stage.replace("_", " ").title())
-
-    # --- Settings ---
-    st.subheader("Settings")
-    st.session_state.show_reasoning = st.checkbox(
-        "Show reasoning", value=st.session_state.show_reasoning
-    )
 
     st.divider()
     if st.button("Reset conversation", width="stretch"):
@@ -175,16 +177,16 @@ for i, msg in enumerate(st.session_state.messages):
         st.markdown(msg["content"])
         if msg.get("plot_html"):
             _render_plot(msg["plot_html"], f"plot_{i}")
-        if st.session_state.show_reasoning and msg.get("reasoning"):
-            with st.expander("Reasoning"):
-                st.code(msg["reasoning"], language=None)
+        if st.session_state.show_explain and msg.get("explain"):
+            with st.expander("Explanation"):
+                st.code(msg["explain"], language=None)
         if msg.get("dataframe") is not None:
             st.dataframe(msg["dataframe"], width="stretch")
 
 # =========================================================================
 # Human approval gate (editable plan form)
 # =========================================================================
-_UNIVARIATE_ONLY = ["Naive", "SeasonalNaive", "ARIMA", "ETS", "N-BEATS", "TinyTimeMixer"]
+_UNIVARIATE_ONLY = ["Naive", "SeasonalNaive", "ARIMA", "ETS", "N-BEATS"]
 _MULTIVARIATE_ONLY = []  # No models are multivariate-only
 _BOTH = ["RandomForest", "LightGBM"]  # Support both uni and multivariate
 _ALL_MODELS = _UNIVARIATE_ONLY + _BOTH
@@ -194,8 +196,8 @@ if st.session_state.stage == "awaiting_approval" and not st.session_state.plan_a
     if plan:
         st.subheader("Edit & Approve Plan")
 
-        if plan.reasoning:
-            st.caption(f"LLM reasoning: {plan.reasoning}")
+        if plan.explanation:
+            st.caption(f"LLM explanation: {plan.explanation}")
 
         # Multivariate checkbox outside form to allow reactive updates
         is_multivariate = st.checkbox(

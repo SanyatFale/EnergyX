@@ -1,153 +1,147 @@
 # TinyTS-Scientist
 
-A **Local, Human-in-the-Loop Agentic Time-Series System** with Streamlit chat UI, LLM-powered query understanding, 7-method anomaly ensemble, and explainability.
+An **agentic time-series forecasting and anomaly detection system** with multi-layered explainability. The system uses LLM-driven tool calling to autonomously profile data, train models, detect anomalies, and generate grounded explanations combining statistical metrics, model attributions, feature analysis, counterfactual reasoning, and contextual snapshots.
 
-## Architecture
+Submitted to the **ICLR 2026 Workshop on Time Series in the Age of Large Models (TSALM)**.
 
-```
-Streamlit Chat UI (app.py)  /  CLI (cli.py)
-  |
-  DataProfiler  ->  QueryUnderstanding  ->  TaskPlanner  ->
-  Training  ->  StrategySelector  ->  Execution  ->
-  Explainability  ->  ReportGenerator  ->  END
-```
+## Key Contributions
 
-Each node has a distinct responsibility with explicit, typed state (Pydantic + TypedDict).
-
-### Key Principles
-
-1. **LLMs for reasoning, NOT computation** -- LLMs parse queries, suggest strategies, and explain results. They never see raw data.
-2. **All models as LangChain tools** -- Forecasting and anomaly detection models are tool-wrapped and invoked by nodes.
-3. **Two-LLM temperature pattern** -- Low temp (0.1) for deterministic routing/parsing, high temp (0.7) for synthesis/explanation.
-4. **No data leakage** -- Validation metrics computed only on held-out folds.
-5. **Dual LLM provider** -- Cerebras (cloud, default) or Ollama (local) via `get_llm()`.
+1. **Agentic Architecture**: LLM autonomously orchestrates a pipeline of forecasting/anomaly tools via native tool calling, with human-in-the-loop plan approval.
+2. **Multi-Layered Explainability**: Combines STL decomposition, lag correlations, SHAP values, feature importance, feature correlations, and contextual anomaly snapshots into grounded, interpretable output.
+3. **Counterfactual Analysis**: Forward (what-if scenarios under modified features) and inverse (Nelder-Mead optimization to find feature changes needed to reach a target).
+4. **7-Method Anomaly Ensemble**: Z-score, MAD, Rolling Statistics, IQR, STL Residuals, Isolation Forest, and DBSCAN with majority voting.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
-- (Optional) Ollama for local LLM: `ollama pull llama3.2:3b`
-- (Optional) Cerebras API key for cloud LLM
+- A Cerebras API key (free tier) **or** a local Ollama installation
 
 ### Installation
 
 ```bash
-cd tiny-agent
-poetry install
+# Clone and enter the repository
+git clone <repo-url> && cd tiny-agent
 
+# Create virtual environment and install
+python3 -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+
+# Configure environment
 cp .env.example .env
-# Edit .env -- set LLM_PROVIDER, CEREBRAS_API_KEY, etc.
+# Edit .env: set LLM_PROVIDER and CEREBRAS_API_KEY (or OLLAMA settings)
 ```
 
-### Streamlit UI
+### Run the Streamlit UI
 
 ```bash
 streamlit run app.py
 ```
 
-Upload a CSV, select time/target columns, type a query like "forecast next 7 days", and the pipeline runs stage-by-stage with interactive results.
+1. The default dataset (building energy) loads automatically.
+2. Select time/target/feature columns in the sidebar.
+3. Type a query: `"forecast next 3 days"`, `"detect anomalies and explain"`, or `"what if temperature drops by 5 degrees?"`.
+4. Review and approve the plan, then the agent executes autonomously.
 
-### CLI
+### Run via CLI
 
 ```bash
-poetry run python main.py run data/example.csv \
-  --time date --target sales \
-  --query "forecast next 7 days and explain"
+python -m tinyts.cli run "data/raw/building_energy_data (copy 1)_elec.csv" \
+  --time timestamp --target meter_reading \
+  --query "forecast next 3 days and explain"
 ```
 
-### Python API
+## Architecture
 
-```python
-from tinyts.graph import create_graph
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
 
-graph = create_graph()
-state = graph.run(
-    dataset_path="data/example.csv",
-    time_column="date",
-    target_column="sales",
-    user_query="forecast next 14 days",
-)
-print(state["predictions"])
-print(state["explainability_result"].llm_explanation)
 ```
-
-## Pipeline Nodes
-
-| Node | Type | Purpose |
-|------|------|---------|
-| **DataProfiler** | Deterministic | Frequency, stationarity (ADF/KPSS), seasonality, outliers, Plotly plots |
-| **QueryUnderstanding** | LLM (low temp) | Parse user query into structured `UserTaskPlan` |
-| **TaskPlanner** | Deterministic | Convert plan to model configs, CV settings, handle multivariate |
-| **Training** | Deterministic | Rolling-origin CV, hyperparameter search, per-model metrics |
-| **StrategySelector** | LLM-assisted | Ensemble weights + LLM explanation of strategy choice |
-| **Execution** | Deterministic | Final predictions, Plotly visualizations |
-| **Explainability** | LLM + compute | STL decomposition, SHAP, feature importance, lag correlations, LLM synthesis |
-| **ReportGenerator** | LLM | Concise scientific report with all-stage outputs |
+User Query
+    |
+    v
+[Plan Phase]  DataProfiler -> QueryUnderstanding (LLM) -> UserTaskPlan
+    |
+    v
+[Human Approval]  Edit models, horizon, explanation toggles
+    |
+    v
+[Execute Phase]  LLM tool-calling loop:
+    |   train_forecast_model() / train_and_explain_forecast()
+    |   combine_forecasts() / detect_anomalies() / explain_anomalies()
+    |   counterfactual_forward() / counterfactual_inverse()
+    |   generate_report()
+    v
+[Output]  Predictions + Plots + Grounded Explanation
+```
 
 ## Models
 
-### Forecasting
-- **Statistical:** Naive, SeasonalNaive, ARIMA, ETS
-- **Tree-based:** RandomForest, LightGBM (univariate + multivariate)
-- **Neural:** N-BEATS, TinyTimeMixer
+| Family | Models | Multivariate |
+|--------|--------|:------------:|
+| Statistical | Naive, SeasonalNaive, ARIMA (auto), ETS | No |
+| Tree-based | RandomForest, LightGBM | Yes |
+| Neural | N-BEATS | No |
 
-### Anomaly Detection (7-method ensemble)
-- Z-score, Modified Z-score (MAD), Rolling statistics, IQR, STL residuals, Isolation Forest, DBSCAN
-- Majority voting via `run_anomaly_ensemble`
+## Explainability Layers
 
-### Explainability
-- Statistical summary (trend, recent averages)
-- STL decomposition (trend/seasonal strength)
-- Lag contributions (autocorrelation at lags 1, 6, 12, 24)
-- Feature importance (tree models)
-- SHAP values (optional, requires `shap` package)
-- Feature correlations
-- LLM-synthesized explanation grounded in metrics
+| Layer | Source | Scope |
+|-------|--------|-------|
+| Statistical summary | Train/test split stats | Dataset |
+| STL decomposition | Trend, seasonal, residual | Dataset |
+| Lag correlations | ACF at lags 1, 6, 12, 24 | Dataset |
+| Feature importance | Tree model `.feature_importances_` | Per model |
+| SHAP values | TreeExplainer | Per model |
+| Feature correlations | Pearson with target | Dataset |
+| Anomaly context | 5-value window of target + features | Per anomaly |
+| Counterfactual | Forward (what-if) and inverse (target-seeking) | Scenario |
 
 ## Project Structure
 
 ```
-app.py                        # Streamlit chat interface
+app.py                          # Streamlit chat UI
 tinyts/
-  config.py                   # Settings + get_llm() helper
-  state.py                    # Pydantic models + AgentState
-  graph.py                    # LangGraph workflow
-  cli.py                      # CLI with --query flag
+  agent.py                      # Central LLM agent (plan + execute)
+  agent_tools.py                # Tool factory with closures (~1200 lines)
+  config.py                     # Settings + get_llm() (Cerebras / Ollama)
+  state.py                      # Pydantic models (UserTaskPlan, etc.)
+  cli.py                        # CLI interface
   nodes/
-    data_profiler.py          # Enhanced profiling + Plotly
-    query_understanding.py    # LLM query parsing
-    task_planner.py           # Plan -> model configs
-    training.py               # CV + multivariate support
-    strategy_selector.py      # LLM-assisted ensemble
-    execution.py              # Predictions + Plotly plots
-    explainability.py         # SHAP, STL, correlations, LLM
-    report_generator.py       # LLM report with explainability
-    _reasoning_agent_old.py   # Deprecated
-    _human_approval_old.py    # Deprecated
-    _model_planner_old.py     # Deprecated
+    data_profiler.py            # Frequency, stationarity, seasonality
+    query_understanding.py      # LLM query -> structured plan
   tools/
-    statistical.py
-    tree_based.py             # + multivariate variants
-    neural.py
-    anomaly.py                # 7-method ensemble
-    ensemble.py
-    explainability.py         # Computation utilities
+    statistical.py              # Naive, SeasonalNaive, ARIMA, ETS
+    tree_based.py               # RandomForest, LightGBM (uni + multivariate)
+    neural.py                   # N-BEATS
+    anomaly.py                  # 7-method ensemble
+    ensemble.py                 # Weighted combination
+    explainability.py           # SHAP, FI, STL, lags, correlations
+data/
+  raw/                          # Building energy datasets, UCI household power
+  processed/                    # Preprocessed datasets
 ```
 
 ## Configuration
 
 ```bash
 # .env
-LLM_PROVIDER=cerebras          # or "ollama"
-CEREBRAS_API_KEY=your_key
+LLM_PROVIDER=cerebras              # or "ollama"
+CEREBRAS_API_KEY=your_key_here
 CEREBRAS_MODEL=llama-3.3-70b
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2:3b
+CEREBRAS_BASE_URL=https://api.cerebras.ai/v1
 ROUTING_TEMPERATURE=0.1
 SYNTHESIS_TEMPERATURE=0.7
-MAX_WORKERS=4
-DEVICE=cuda
+DEVICE=cpu                         # or "cuda"
+```
+
+## Reproducibility
+
+```bash
+# Exact environment
+pip install -r requirements.txt    # Pinned versions
+
+# Deterministic seeds
+RANDOM_SEED=42                     # In .env, used by all stochastic models
 ```
 
 ## License

@@ -77,12 +77,6 @@ MODEL_TEMPLATES = {
         "search_space": {"n_lags": [12, 24, 48], "hidden_size": [32, 64, 128], "epochs": [30, 50, 100]},
         "supports_multivariate": False,
     },
-    "TinyTimeMixer": {
-        "family": "neural",
-        "hyperparameters": {},
-        "search_space": {},
-        "supports_multivariate": False,
-    },
 }
 
 # ---------------------------------------------------------------------------
@@ -103,7 +97,7 @@ def _get_model_tools():
             train_random_forest_forecaster, train_lightgbm_forecaster,
             train_random_forest_multivariate, train_lightgbm_multivariate,
         )
-        from tinyts.tools.neural import train_nbeats, train_tiny_time_mixer
+        from tinyts.tools.neural import train_nbeats
 
         _UNI_TOOLS = {
             "Naive": train_naive_forecaster,
@@ -113,7 +107,6 @@ def _get_model_tools():
             "RandomForest": train_random_forest_forecaster,
             "LightGBM": train_lightgbm_forecaster,
             "N-BEATS": train_nbeats,
-            "TinyTimeMixer": train_tiny_time_mixer,
         }
         _MV_TOOLS = {
             "RandomForest": train_random_forest_multivariate,
