@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     cerebras_model: str = Field(default="llama-3.3-70b")
     cerebras_base_url: str = Field(default="https://api.cerebras.ai/v1")
 
-    # Temperature settings (two-LLM pattern from OwnSolarCast)
+    # Temperature settings (two-LLM pattern)
     routing_temperature: float = Field(default=0.1)
     synthesis_temperature: float = Field(default=0.7)
 
