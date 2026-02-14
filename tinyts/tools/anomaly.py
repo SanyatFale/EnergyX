@@ -1,6 +1,6 @@
 """Anomaly detection tools - 7-method ensemble.
 
-Ported from OwnSolarCast anomaly.py. Includes:
+Includes:
 Z-score, Modified Z-score (MAD), Rolling statistics, IQR,
 STL decomposition, Isolation Forest, DBSCAN, and ensemble voting.
 """
@@ -366,7 +366,7 @@ def run_anomaly_ensemble(
 ) -> str:
     """Run all 7 anomaly detection methods and return majority-voted results.
 
-    Ported from OwnSolarCast anomaly.py ensemble voting pattern.
+    ensemble voting pattern.
     A point is flagged as anomaly if >= min_votes methods agree.
 
     Args:
