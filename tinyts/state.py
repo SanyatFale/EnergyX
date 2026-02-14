@@ -177,7 +177,7 @@ class EnsembleStrategy(BaseModel):
 class ExplainabilityResult(BaseModel):
     """Results from the explainability suite.
 
-    Ported from OwnSolarCast explain.py — holds all computed metrics
+    holds all computed metrics
     plus the LLM-generated explanation.
     """
 
