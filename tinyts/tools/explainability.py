@@ -1,6 +1,5 @@
 """Explainability computation utilities.
-
-Ported from OwnSolarCast explain.py. Provides statistical summaries,
+Provides statistical summaries,
 STL decomposition, lag contributions, feature importance, SHAP values,
 feature correlations, and anomaly explanation helpers.
 """
