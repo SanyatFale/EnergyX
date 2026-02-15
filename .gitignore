@@ -68,3 +68,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+evaluate_forecasting_output_fast.txt
+data/test/ETTm2.csv
+/data
+eval_forecast_output.txt
