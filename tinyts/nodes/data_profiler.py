@@ -111,7 +111,7 @@ class DataProfilerNode(BaseNode):
         head_rows = self._build_head_rows(df, n=10)
 
         # Column role detection
-        datetime_cols, numeric_cols, categorical_cols = self._detect_column_roles(df)
+        datetime_cols, numeric_cols, categorical_cols, categorical_values = self._detect_column_roles(df)
 
         # Missing data
         missing_pct = (df[target_col].isna().sum() / n_rows) * 100
@@ -149,6 +149,7 @@ class DataProfilerNode(BaseNode):
             datetime_columns=datetime_cols,
             numeric_columns=numeric_cols,
             categorical_columns=categorical_cols,
+            categorical_values=categorical_values,
             time_column=time_col,
             target_column=target_col,
             covariates=covariates,
@@ -188,11 +189,15 @@ class DataProfilerNode(BaseNode):
         """First n rows as list of dicts for UI preview."""
         return df.head(n).astype(str).to_dict(orient="records")
 
-    def _detect_column_roles(self, df: pd.DataFrame) -> tuple[list, list, list]:
-        """Auto-detect column roles: datetime, numeric, categorical."""
+    def _detect_column_roles(self, df: pd.DataFrame) -> tuple[list, list, list, dict]:
+        """Auto-detect column roles: datetime, numeric, categorical.
+
+        Returns (datetime_cols, numeric_cols, categorical_cols, categorical_values).
+        """
         datetime_cols = []
         numeric_cols = []
         categorical_cols = []
+        categorical_values: dict[str, list[str]] = {}
 
         for col in df.columns:
             if pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -206,10 +211,14 @@ class DataProfilerNode(BaseNode):
                     datetime_cols.append(col)
                 except (ValueError, TypeError):
                     categorical_cols.append(col)
+                    unique_vals = df[col].dropna().unique()
+                    categorical_values[col] = sorted(
+                        [str(v) for v in unique_vals[:20]]
+                    )
             else:
                 categorical_cols.append(col)
 
-        return datetime_cols, numeric_cols, categorical_cols
+        return datetime_cols, numeric_cols, categorical_cols, categorical_values
 
     def _build_summary(self, profile: DataProfile) -> DatasetSummary:
         """Build DatasetSummary from DataProfile for backward compatibility."""

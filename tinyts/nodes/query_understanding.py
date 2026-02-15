@@ -16,19 +16,22 @@ from tinyts.state import AgentState, DataProfile, UserTaskPlan
 
 AVAILABLE_MODELS = [
     "Naive", "SeasonalNaive", "ARIMA", "ETS",
-    "RandomForest", "LightGBM", "N-BEATS", "TinyTimeMixer",
     "RandomForest", "LightGBM", "N-BEATS",
 ]
 
-QUERY_PROMPT_TEMPLATE = """You are a time series analysis assistant. Parse the user's request.
+QUERY_PROMPT_TEMPLATE = """You are a time series analysis assistant. Parse the user's request and resolve column references.
 
 DATASET:
 - {n_rows} rows x {n_cols} columns
-- Time column: {time_column}, Target: {target_column}
+- Time column: {time_column}
+- Default target column: {default_target_column}
 - Frequency: {frequency} ({steps_per_day} steps/day)
 - Date range: {date_range}
 - Trend: {has_trend}, Seasonality: {has_seasonality} (period={seasonal_period})
 - Numeric columns: {numeric_columns}
+- Categorical columns: {categorical_columns}
+- Categorical column values: {categorical_values}
+- All columns (name, type, uniques): {all_columns_info}
 
 USER QUERY: "{user_query}"
 
@@ -37,8 +40,11 @@ Return ONLY a valid JSON object (no markdown, no comments, no explanation) with 
   "user_query": "<the user's query>",
   "task_type": "forecast" or "anomaly" or "both",
   "is_multivariate": false,
-  "target_column": "{target_column}",
-  "feature_columns": [],
+  "target_column": "<resolved numeric column name>",
+  "feature_columns": ["<resolved numeric column names>"],
+  "data_filters": [
+    {{"column": "<categorical column>", "op": "==", "value": "<exact value from categorical column values>"}}
+  ],
   "horizon": <integer number of time steps — if user says N days, multiply by {steps_per_day}>,
   "models_included": ["Naive", "ARIMA", "ETS"] (univariate) OR ["RandomForest", "LightGBM"] (multivariate),
   "models_excluded": [],
@@ -46,22 +52,38 @@ Return ONLY a valid JSON object (no markdown, no comments, no explanation) with 
   "needs_explanation": false,
   "needs_report": false,
   "needs_plots": true,
-  "explanation": "<1 sentence>",
+  "explanation": "<1-2 sentences explaining your column/filter resolution>",
   "counterfactual_type": null,
   "counterfactual_changes": {{}},
   "counterfactual_target_value": null,
   "counterfactual_constraints": {{}}
 }}
 
-RULES:
+COLUMN RESOLUTION RULES:
+- Match user's column references to actual column names using fuzzy matching.
+  Example: "electricity usage" with categorical values meter_type=["electricity","chilledwater","steam"]
+    -> target_column="meter_reading", data_filters=[{{"column":"meter_type","op":"==","value":"electricity"}}]
+  Example: "air temperature" -> "air_temperature" (underscore tolerance)
+  Example: "cloud coverage" -> "cloud_coverage" (fuzzy match)
+- If the user mentions a value that appears in a categorical column, add a data_filters entry for it.
+- target_column MUST be a numeric column from the dataset.
+- feature_columns MUST be numeric columns from the dataset.
+- data_filters values MUST be exact values from the categorical column values listed above.
+- If no filters are needed (no categorical value mentioned, or simple dataset), set data_filters=[].
+- If you cannot confidently resolve a column, use the default: "{default_target_column}"
+
+HORIZON RULES:
 - horizon MUST be in time steps, not days. {steps_per_day} steps = 1 day.
+
+MODEL RULES:
 - Output raw JSON only. No ```json blocks. No comments. No trailing text.
-- Only set is_multivariate=true if user explicitly asks for it.
-- UNIVARIATE models: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS, TinyTimeMixer
+- If feature_columns is non-empty, set is_multivariate=true.
+- If feature_columns is empty, set is_multivariate=false.
 - UNIVARIATE models: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS
 - MULTIVARIATE models (require features): RandomForest, LightGBM
-- If is_multivariate=true, ONLY include RandomForest/LightGBM in models_included
-- If is_multivariate=false, ONLY include univariate models in models_included
+- For task_type="forecast": if is_multivariate=true, ONLY include RandomForest/LightGBM in models_included. If false, include univariate models.
+- For task_type="anomaly": models_included=[] (anomaly uses a fixed 7-method ensemble). If is_multivariate=true AND feature_columns is non-empty, anomaly detection automatically uses multivariate mode (IsolationForest/DBSCAN on full feature matrix, per-channel voting for statistical methods).
+- For task_type="both": set models_included per forecast rules above; anomaly part auto-uses features if is_multivariate=true.
 
 COUNTERFACTUAL RULES:
 - If user says "what if X drops/increases by N" or "if X changes to N":
@@ -146,12 +168,24 @@ class QueryUnderstandingNode(BaseNode):
 
         llm = get_llm(temperature=settings.routing_temperature)
 
+        all_columns_info = "; ".join(
+            f"{c['name']} ({c['dtype']}, {c['unique_count']} unique)"
+            for c in profile.columns[:30]
+        )
+        cat_vals_str = json.dumps(
+            profile.categorical_values
+            if profile.categorical_values else {}
+        )
+
         formatted_prompt = self.prompt.format_messages(
             n_rows=profile.shape[0],
             n_cols=profile.shape[1],
             time_column=profile.time_column,
-            target_column=profile.target_column,
+            default_target_column=profile.target_column,
             numeric_columns=", ".join(profile.numeric_columns[:15]),
+            categorical_columns=", ".join(profile.categorical_columns[:10]),
+            categorical_values=cat_vals_str,
+            all_columns_info=all_columns_info,
             frequency=profile.inferred_frequency or "Unknown",
             steps_per_day=steps_per_day,
             date_range=f"{profile.date_range[0]} to {profile.date_range[1]}",
@@ -229,18 +263,32 @@ class QueryUnderstandingNode(BaseNode):
         elif bare_match:
             horizon = int(bare_match.group(1)) * steps_per_day
 
-        # Default model selection based on multivariate flag
+        # Default model selection based on multivariate flag and task type
         feature_cols = []
         if is_multivariate:
             feature_cols = [
                 c for c in profile.numeric_columns
                 if c != profile.target_column
             ]
+
+        # Anomaly: no forecast models needed (uses fixed 7-method ensemble).
+        # Multivariate flag still matters — it tells detect_anomalies to
+        # use the full feature matrix for IF/DBSCAN and per-channel voting.
+        if task_type == "anomaly":
+            models = []
+        elif is_multivariate:
             models = ["RandomForest", "LightGBM"]
         else:
-            models = ["Naive", "ARIMA", "ETS"]
-            if profile.has_seasonality:
-                models.insert(1, "SeasonalNaive")
+            models = ["Naive", "SeasonalNaive", "ARIMA", "ETS", "N-BEATS"]
+
+        # Detect categorical filter intent
+        data_filters = []
+        if profile.categorical_values:
+            for cat_col, cat_vals in profile.categorical_values.items():
+                for val in cat_vals:
+                    if val.lower() in query_lower:
+                        data_filters.append({"column": cat_col, "op": "==", "value": val})
+                        break  # one filter per column
 
         # Detect counterfactual intent
         cf_type = None
@@ -268,6 +316,7 @@ class QueryUnderstandingNode(BaseNode):
             is_multivariate=is_multivariate,
             target_column=profile.target_column,
             feature_columns=feature_cols,
+            data_filters=data_filters,
             horizon=horizon,
             models_included=models,
             models_excluded=[],

@@ -13,7 +13,6 @@ from tinyts.tools.tree_based import (
     train_lightgbm_multivariate,
 )
 from tinyts.tools.neural import (
-    train_tiny_time_mixer,
     train_nbeats,
 )
 from tinyts.tools.anomaly import (
@@ -43,7 +42,6 @@ __all__ = [
     "train_random_forest_multivariate",
     "train_lightgbm_multivariate",
     # Neural
-    "train_tiny_time_mixer",
     "train_nbeats",
     # Anomaly detection (7-method ensemble)
     "run_isolation_forest",

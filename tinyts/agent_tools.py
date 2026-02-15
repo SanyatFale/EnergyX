@@ -310,6 +310,7 @@ def create_agent_tools(
     target_column: str,
     output_dir: str,
     feature_columns: Optional[List[str]] = None,
+    data_filters: Optional[List[Dict[str, str]]] = None,
 ) -> Tuple[list, dict]:
     """Create agent tools bound to a dataset session.
 
@@ -320,6 +321,23 @@ def create_agent_tools(
     # Pre-load data
     df = pd.read_csv(dataset_path, parse_dates=[time_column])
     df = df.sort_values(time_column).reset_index(drop=True)
+
+    # Apply data filters (e.g., meter_type == 'electricity')
+    if data_filters:
+        for filt in data_filters:
+            col = filt.get("column", "")
+            op = filt.get("op", "==")
+            val = filt.get("value", "")
+            if col in df.columns:
+                if op == "==":
+                    df = df[df[col].astype(str) == str(val)]
+                elif op == "!=":
+                    df = df[df[col].astype(str) != str(val)]
+                logger.info(f"Applied filter: {col} {op} {val} -> {len(df)} rows remaining")
+        df = df.reset_index(drop=True)
+        if len(df) == 0:
+            raise ValueError(f"No data remaining after applying filters: {data_filters}")
+
     y_raw = df[target_column].values.astype(float)
 
     # Trim leading zeros / NaN
@@ -385,7 +403,7 @@ def create_agent_tools(
         session["profile"] = profile
         session["dataset_summary"] = state["dataset_summary"]
 
-        return json.dumps({
+        out = {
             "n_rows": profile.shape[0],
             "n_cols": profile.shape[1],
             "frequency": profile.inferred_frequency,
@@ -401,7 +419,16 @@ def create_agent_tools(
             "kpss_pvalue": round(profile.kpss_pvalue, 4),
             "numeric_columns": profile.numeric_columns,
             "feature_columns_available": feat_cols,
-        })
+        }
+        _warnings = []
+        if profile.missing_pct > 10:
+            _warnings.append(f"High missing data ({profile.missing_pct:.1f}%) — may affect model quality")
+        if profile.outlier_pct > 5:
+            _warnings.append(f"High outlier rate ({profile.outlier_pct:.1f}%) — consider outlier handling")
+        out["status"] = "warning" if _warnings else "ok"
+        if _warnings:
+            out["warnings"] = _warnings
+        return json.dumps(out)
 
     # ===== TOOL 2: Train Forecast Model =====
     @tool
@@ -413,7 +440,7 @@ def create_agent_tools(
 
         Args:
             model_name: Choose from available models.
-                UNIVARIATE: Naive|SeasonalNaive|ARIMA|ETS|N-BEATS|TinyTimeMixer
+                UNIVARIATE: Naive|SeasonalNaive|ARIMA|ETS|N-BEATS
                 MULTIVARIATE (requires features): RandomForest|LightGBM
             horizon: Number of time steps to forecast
 
@@ -502,6 +529,20 @@ def create_agent_tools(
         }
         if warn:
             out["warning"] = warn
+
+        # Validation
+        _warnings = []
+        if warn:
+            _warnings.append(warn)
+        if mean_mape > 50:
+            _warnings.append(f"High MAPE ({mean_mape:.1f}%) — predictions may be unreliable")
+        if len(predictions) > 1 and np.std(predictions) < 1e-6:
+            _warnings.append("Constant predictions — model may be degenerate")
+        if any(not np.isfinite(p) for p in predictions):
+            _warnings.append("Predictions contain NaN/Inf values")
+        out["status"] = "warning" if _warnings else "ok"
+        if _warnings:
+            out["warnings"] = _warnings
         return json.dumps(out)
 
     # ===== TOOL 3: Train + Explain =====
@@ -515,7 +556,7 @@ def create_agent_tools(
 
         Args:
             model_name: Choose from available models.
-                UNIVARIATE: Naive|SeasonalNaive|ARIMA|ETS|N-BEATS|TinyTimeMixer
+                UNIVARIATE: Naive|SeasonalNaive|ARIMA|ETS|N-BEATS
                 MULTIVARIATE (requires features): RandomForest|LightGBM
             horizon: Number of time steps to forecast
 
@@ -684,6 +725,14 @@ def create_agent_tools(
             }
 
         fc["explainability"] = explain_out
+
+        # Inherit training warnings, add explain-specific checks
+        _warnings = fc.get("warnings", [])
+        if not fi_pct and is_mv:
+            _warnings.append("Feature importance not available for this model type")
+        fc["status"] = "warning" if _warnings else "ok"
+        if _warnings:
+            fc["warnings"] = _warnings
         return json.dumps(fc)
 
     # ===== TOOL 4: Ensemble Strategy =====
@@ -711,6 +760,7 @@ def create_agent_tools(
                 "model_weights": {name: 1.0},
                 "selected_models": [name],
                 "justification": f"Only one model trained ({name}, MAPE={r['mean_mape']:.2f}%).",
+                "status": "ok",
             }
             session["ensemble_strategy"] = strat
             return json.dumps(strat)
@@ -748,6 +798,7 @@ def create_agent_tools(
             "selected_models": list(weights.keys()),
             "per_model_scores": {n: {"mape": round(d["mean_mape"], 2), "std": round(d["std_mape"], 2)} for n, d in top},
             "justification": justification_parts,
+            "status": "ok",
         }
         session["ensemble_strategy"] = strat
         return json.dumps(strat)
@@ -803,19 +854,35 @@ def create_agent_tools(
         session["final_predictions"] = preds
         _save_forecast_plot(y, preds, results, strat["selected_models"], output_dir)
 
-        return json.dumps({
+        out = {
             "n_predictions": len(preds),
             "predictions": [round(v, 2) for v in preds],
             "strategy": strat["strategy_type"],
             "models_used": strat["selected_models"],
             "weights": strat["model_weights"],
-        })
+        }
+
+        _warnings = []
+        best_mape = min(r["mean_mape"] for r in results.values())
+        if best_mape > 50:
+            _warnings.append(f"Best model MAPE is {best_mape:.1f}% — ensemble forecast may be unreliable")
+        if len(preds) > 1 and np.std(preds) < 1e-6:
+            _warnings.append("Combined forecast is nearly constant")
+        out["status"] = "warning" if _warnings else "ok"
+        if _warnings:
+            out["warnings"] = _warnings
+        return json.dumps(out)
 
     # ===== TOOL 6: Detect Anomalies =====
     @tool
     def detect_anomalies(confirm: str = "yes") -> str:
         """Run 7-method anomaly ensemble (Z-score, MAD, Rolling, IQR,
         STL, IsolationForest, DBSCAN) with majority voting.
+
+        Multivariate mode (auto-enabled when feature columns are
+        configured): IsolationForest & DBSCAN use the full
+        [target + features] matrix; per-channel methods run on each
+        column and union the results.
 
         Args:
             confirm: Just pass "yes" to confirm.
@@ -824,17 +891,39 @@ def create_agent_tools(
             JSON with n_anomalies, per-method counts, average_agreement
         """
         from tinyts.tools.anomaly import run_anomaly_ensemble as _rae
-        result = json.loads(_rae.invoke({"data": json.dumps(y.tolist())}))
+
+        invoke_args = {"data": json.dumps(y.tolist())}
+        # Pass features for multivariate anomaly detection
+        if feat_cols and X is not None and len(X) == len(y):
+            invoke_args["features"] = json.dumps(X.tolist())
+
+        result = json.loads(_rae.invoke(invoke_args))
         session["anomaly_results"] = result
         _save_anomaly_plot(y, result, target_column, output_dir)
 
-        return json.dumps({
+        is_mv = result.get("metadata", {}).get("multivariate", False)
+        out = {
             "n_anomalies": result["n_anomalies"],
             "method_counts": result["method_counts"],
             "min_votes": result["metadata"]["min_votes"],
             "average_agreement": round(result["metadata"]["average_agreement"], 1),
             "total_data_points": len(y),
-        })
+            "multivariate": is_mv,
+        }
+        if is_mv:
+            out["n_features"] = result["metadata"].get("n_features", 0)
+            out["feature_columns"] = feat_cols
+
+        _warnings = []
+        pct_anomalies = result["n_anomalies"] / max(len(y), 1) * 100
+        if result["n_anomalies"] == 0:
+            _warnings.append("No anomalies detected — data may be clean or thresholds too strict")
+        elif pct_anomalies > 20:
+            _warnings.append(f"{pct_anomalies:.1f}% of data flagged as anomalous — thresholds may be too loose")
+        out["status"] = "warning" if _warnings else "ok"
+        if _warnings:
+            out["warnings"] = _warnings
+        return json.dumps(out)
 
     # ===== TOOL 7: Explain Anomalies =====
     @tool
@@ -897,6 +986,13 @@ def create_agent_tools(
             snapshots.append(snap)
         exp["context_snapshots"] = snapshots
 
+        # Reflect multivariate mode from detection phase
+        is_mv = anom.get("metadata", {}).get("multivariate", False)
+        exp["multivariate"] = is_mv
+        if is_mv and feat_cols:
+            exp["feature_columns"] = feat_cols
+
+        exp["status"] = "ok"
         session["anomaly_explanation"] = exp
         return json.dumps(exp, default=str)
 
@@ -911,6 +1007,11 @@ def create_agent_tools(
             The full report text (markdown)
         """
         from tinyts.config import get_llm
+
+        # Precondition: at least some analysis must exist
+        has_results = session.get("model_results") or session.get("anomaly_results")
+        if not has_results:
+            return json.dumps({"error": "No analysis results to report. Run forecast or anomaly detection first.", "status": "error"})
 
         parts = []
         prof = session.get("profile")
@@ -1067,7 +1168,7 @@ def create_agent_tools(
         # Save comparison plot
         _save_counterfactual_plot(y, baseline_preds, cf_preds, changes, output_dir)
 
-        return json.dumps({
+        out = {
             "model": best_mv,
             "baseline_mean": round(float(np.mean(baseline_preds)), 2),
             "counterfactual_mean": round(float(np.mean(cf_preds)), 2),
@@ -1076,7 +1177,20 @@ def create_agent_tools(
             "feature_changes": applied_changes,
             "preview_baseline": [round(v, 2) for v in baseline_preds[:5]],
             "preview_counterfactual": [round(v, 2) for v in cf_preds[:5]],
-        })
+        }
+
+        _warnings = []
+        model_res = session.get("model_results", {}).get(best_mv)
+        if not model_res:
+            _warnings.append(f"Model {best_mv} was not pre-trained — used default hyperparameters")
+        elif model_res["mean_mape"] > 30:
+            _warnings.append(f"Underlying model MAPE is {model_res['mean_mape']:.1f}% — counterfactual estimates have high uncertainty")
+        if abs(float(np.mean(deltas))) < 0.01:
+            _warnings.append("Negligible impact detected — the changed features may not influence the target")
+        out["status"] = "warning" if _warnings else "ok"
+        if _warnings:
+            out["warnings"] = _warnings
+        return json.dumps(out)
 
     # ===== TOOL 10: Counterfactual Inverse (Target-Seeking) =====
     @tool
@@ -1216,7 +1330,7 @@ def create_agent_tools(
             "model": best_mv,
         }
 
-        return json.dumps({
+        out = {
             "model": best_mv,
             "target_value": target_value,
             "current_predicted": round(float(current_pred), 2),
@@ -1224,7 +1338,18 @@ def create_agent_tools(
             "gap": round(float(abs(final_pred - target_value)), 2),
             "converged": bool(result.success),
             "feature_recommendations": feature_recommendations,
-        })
+        }
+
+        _warnings = []
+        if not result.success:
+            _warnings.append("Optimization did not converge — recommendations may be approximate")
+        gap_pct = abs(final_pred - target_value) / max(abs(target_value), 0.01) * 100
+        if gap_pct > 10:
+            _warnings.append(f"Optimized prediction is {gap_pct:.1f}% away from target — target may not be achievable with available features")
+        out["status"] = "warning" if _warnings else "ok"
+        if _warnings:
+            out["warnings"] = _warnings
+        return json.dumps(out)
 
     return [
         profile_dataset,

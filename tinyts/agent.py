@@ -36,33 +36,38 @@ TOOLS:
 - train_forecast_model(model_name, horizon) — Train one model
 - train_and_explain_forecast(model_name, horizon) — Train + SHAP/FI
 - combine_forecasts() — Combine trained models (call after training all)
-- detect_anomalies() — Anomaly ensemble
+- detect_anomalies() — Anomaly ensemble (auto-uses multivariate when features configured)
 - explain_anomalies() — Explain anomalies (after detect)
 - generate_report() — Generate report (call last)
 - counterfactual_forward(changes_json, horizon) — What-if forecast
 - counterfactual_inverse(target_value, constraints_json) — Reach target
 
 MODELS: Naive, SeasonalNaive, ARIMA, ETS, N-BEATS (univariate) | RandomForest, LightGBM (multivariate)
+
+RESILIENCE:
+- If a tool returns "status": "warning", read the warnings and factor them into your analysis.
+- If a tool returns an error, retry once. If it fails again, skip it and continue with remaining tasks.
+- Report any skipped or failed tools in your final output so the user knows what was not completed.
 """
 
 FORECAST_WORKFLOW = """
-TASK: Train each model in the list one at a time, then combine.
-Models to train: {models}
-Use: {tool_name}(model_name=<name>, horizon={horizon})
-After all models trained, call combine_forecasts().
-Then STOP and output:
-1. FIRST: A markdown table of first 10 predicted values from combine_forecasts (step | value), mention it as preview.
-2. THEN: Each model's MAPE, ensemble weights, which model won and why.
+GOAL: Forecast the target variable for {horizon} steps.
+Models to evaluate: {models}
+Train each model, combine results into an ensemble, then present your analysis.
+
+OUTPUT REQUIREMENTS:
+1. A markdown table ALLthe  predicted values from the ensemble (step | value)
+2. Each model's MAPE, ensemble weights, which model won and why.
 """
 
 FORECAST_EXPLAIN_WORKFLOW = """
-TASK: Train each model with explanations, then combine.
-Models to train: {models}
-Use: train_and_explain_forecast(model_name=<name>, horizon={horizon})
-After all models trained, call combine_forecasts().
-Then STOP and output:
-1. FIRST: A markdown table of ALL predicted values from combine_forecasts (step | value)
-2. THEN grounded analysis using ALL returned metrics:
+GOAL: Forecast the target variable for {horizon} steps with full explainability.
+Models to evaluate: {models}
+Train each model with explanations, combine results, then present grounded analysis.
+
+OUTPUT REQUIREMENTS:
+1. A markdown table of ALL predicted values from the ensemble (step | value).
+2. Grounded analysis using ALL returned metrics:
 - Model comparison (MAPE, std) — which won and why
 - Feature drivers: cite exact FI% and SHAP% — explain what each feature DOES practically (e.g. "air_temperature FI=35% means temperature is the strongest predictor of energy use")
 - Lag structure: interpret lags as real-world patterns:
@@ -76,15 +81,23 @@ Write for both experts (cite numbers) and non-experts (explain what it means in 
 """
 
 ANOMALY_WORKFLOW = """
-TASK: Detect anomalies.
-Call detect_anomalies().
-Then STOP and report: total anomalies found, per-method counts, agreement level.
+GOAL: Detect anomalies in the dataset.
+Run anomaly detection and report results.
+If feature columns are configured, detection automatically uses multivariate mode
+(IsolationForest & DBSCAN on full feature matrix; Z-score/MAD/IQR/Rolling/STL per-channel with union voting).
+
+OUTPUT REQUIREMENTS:
+Total anomalies found, per-method counts, agreement level.
+If multivariate: note which features contributed to detections.
 """
 
 ANOMALY_EXPLAIN_WORKFLOW = """
-TASK: Detect and explain anomalies.
-Call detect_anomalies(), then explain_anomalies().
-Then STOP and provide grounded analysis. For EACH metric, cite the value AND infer what it means:
+GOAL: Detect and explain anomalies in the dataset.
+Run anomaly detection, then compute explanations for the detected anomalies.
+If feature columns are configured, detection automatically uses multivariate mode.
+
+OUTPUT REQUIREMENTS:
+Grounded analysis. For EACH metric, cite the value AND infer what it means:
 - Method agreement: cite counts → infer if anomalies are clear-cut or borderline
 - Z-scores: cite values → infer severity (mild fluctuation vs extreme event)
 - IQR bounds: cite Q1/Q3/range → infer if anomalies are just outside normal or far beyond
@@ -94,11 +107,12 @@ For each anomaly snapshot, write one sentence: "Anomaly at index X: target dropp
 """
 
 COUNTERFACTUAL_FORWARD_WORKFLOW = """
-TASK: Train multivariate models, then run what-if scenario.
-Models to train: {models}
-Use: train_forecast_model(model_name=<name>, horizon={horizon})
-After training, call counterfactual_forward(changes_json='{changes_json}', horizon={horizon}).
-Then STOP and provide grounded analysis:
+GOAL: Evaluate a what-if scenario for {horizon} steps.
+Feature changes to apply: {changes_json}
+Models to evaluate: {models}
+Train the multivariate models, then run the counterfactual scenario.
+
+OUTPUT REQUIREMENTS:
 - Baseline vs counterfactual forecast comparison (cite exact values)
 - Mean and max impact of the intervention
 - Practical interpretation: what this change means for the target variable
@@ -106,11 +120,12 @@ Then STOP and provide grounded analysis:
 """
 
 COUNTERFACTUAL_INVERSE_WORKFLOW = """
-TASK: Train multivariate models with explanations, then optimize for target {target}.
-Models to train: {models}
-Use: train_and_explain_forecast(model_name=<name>, horizon={horizon})
-After training, call counterfactual_inverse(target_value={target}, constraints_json='{constraints_json}').
-Then STOP and provide grounded analysis:
+GOAL: Find what feature changes are needed to reach a target value of {target} over {horizon} steps.
+Models to evaluate: {models}
+Constraints: {constraints_json}
+Train multivariate models with explanations, then run the inverse optimization.
+
+OUTPUT REQUIREMENTS:
 - Current vs target vs optimized prediction (cite exact values)
 - Feature recommendations: current value, recommended value, change needed (cite %)
 - Feasibility: are changes within historical bounds? did optimizer converge?
@@ -151,9 +166,14 @@ class TinyTSAgent:
     def plan(self, query: str) -> UserTaskPlan:
         """Profile the dataset and parse the user query into a plan.
 
+        Profiles the FULL unfiltered dataset so the LLM can see all
+        categorical values and resolve columns/filters from the query.
+        After this returns, call ``reinitialize_with_plan(plan)`` to
+        re-create tools with the resolved columns and filters applied.
+
         Returns a UserTaskPlan that the UI can display / let the user edit.
         """
-        # Run profile tool
+        # Run profile tool (on the FULL unfiltered dataset)
         profile_json = self.tool_map["profile_dataset"].invoke({})
         profile = self.session["profile"]
 
@@ -164,13 +184,27 @@ class TinyTSAgent:
         from langchain_core.prompts import ChatPromptTemplate
 
         spd = _infer_steps_per_day(profile.inferred_frequency)
+
+        # Build enhanced context for column resolution
+        all_columns_info = "; ".join(
+            f"{c['name']} ({c['dtype']}, {c['unique_count']} unique)"
+            for c in profile.columns[:30]
+        )
+        cat_vals_str = json.dumps(
+            profile.categorical_values
+            if profile.categorical_values else {}
+        )
+
         prompt = ChatPromptTemplate.from_template(QUERY_PROMPT_TEMPLATE)
         msgs = prompt.format_messages(
             n_rows=profile.shape[0],
             n_cols=profile.shape[1],
             time_column=self.time_column,
-            target_column=self.target_column,
+            default_target_column=self.target_column,
             numeric_columns=", ".join(profile.numeric_columns[:15]),
+            categorical_columns=", ".join(profile.categorical_columns[:10]),
+            categorical_values=cat_vals_str,
+            all_columns_info=all_columns_info,
             frequency=profile.inferred_frequency or "Unknown",
             steps_per_day=spd,
             date_range=f"{profile.date_range[0]} to {profile.date_range[1]}",
@@ -183,24 +217,94 @@ class TinyTSAgent:
         llm = get_llm(temperature=settings.routing_temperature)
         task_plan = None
 
-        for attempt in range(3):
-            try:
-                resp = llm.invoke(msgs)
-                parsed = _extract_json(resp.content)
-                if parsed:
-                    task_plan = UserTaskPlan(**parsed)
-                    if not task_plan.target_column:
-                        task_plan.target_column = self.target_column
-                break
-            except Exception as e:
-                logger.warning(f"Plan attempt {attempt+1}/3 failed: {e}")
-                if attempt < 2:
-                    time.sleep(2 ** attempt)
+        # Try native structured output first (avoids fragile JSON parsing)
+        try:
+            structured_llm = llm.with_structured_output(UserTaskPlan)
+            task_plan = structured_llm.invoke(msgs)
+            if task_plan and not task_plan.target_column:
+                task_plan.target_column = self.target_column
+            logger.info("Query parsed via structured output")
+        except Exception as e:
+            logger.info(f"Structured output unavailable, falling back to JSON parsing: {e}")
+
+        # Fallback: free-text JSON parsing with retry
+        if task_plan is None:
+            for attempt in range(3):
+                try:
+                    resp = llm.invoke(msgs)
+                    parsed = _extract_json(resp.content)
+                    if parsed:
+                        task_plan = UserTaskPlan(**parsed)
+                        if not task_plan.target_column:
+                            task_plan.target_column = self.target_column
+                    break
+                except Exception as e:
+                    logger.warning(f"Plan attempt {attempt+1}/3 failed: {e}")
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
 
         if task_plan is None:
             task_plan = self._fallback_plan(query, profile, spd)
 
         return task_plan
+
+    # ------------------------------------------------------------------
+    # Re-initialization with LLM-resolved plan
+    # ------------------------------------------------------------------
+    def reinitialize_with_plan(self, plan: UserTaskPlan):
+        """Re-create tools with LLM-resolved columns and filters.
+
+        Called after plan() returns and user approves the plan.
+        Validates resolved columns, then re-loads data with filters applied.
+        """
+        import pandas as pd
+
+        # Validate against actual dataset columns
+        df_peek = pd.read_csv(self.dataset_path, nrows=1)
+        all_cols = list(df_peek.columns)
+
+        # Validate target_column
+        if plan.target_column and plan.target_column in all_cols:
+            self.target_column = plan.target_column
+        else:
+            if plan.target_column and plan.target_column not in all_cols:
+                logger.warning(
+                    f"LLM-resolved target '{plan.target_column}' not found, "
+                    f"keeping '{self.target_column}'"
+                )
+            plan.target_column = self.target_column
+
+        # Validate feature_columns
+        valid_features = [c for c in (plan.feature_columns or []) if c in all_cols]
+        if len(valid_features) < len(plan.feature_columns or []):
+            invalid = set(plan.feature_columns or []) - set(valid_features)
+            logger.warning(f"Removing invalid feature columns: {invalid}")
+        plan.feature_columns = valid_features
+        self.feature_columns = valid_features
+
+        # Validate filter columns
+        valid_filters = [
+            f for f in (plan.data_filters or [])
+            if f.get("column") in all_cols
+        ]
+        if len(valid_filters) < len(plan.data_filters or []):
+            logger.warning("Some filter columns not found in dataset, removing invalid filters")
+        plan.data_filters = valid_filters
+
+        # Re-create tools with resolved config
+        self.tools, self.session = create_agent_tools(
+            self.dataset_path,
+            self.time_column,
+            self.target_column,
+            self.output_dir,
+            self.feature_columns,
+            data_filters=plan.data_filters if plan.data_filters else None,
+        )
+        self.tool_map = {t.name: t for t in self.tools}
+        logger.info(
+            f"Agent reinitialized: target={self.target_column}, "
+            f"features={self.feature_columns}, filters={plan.data_filters}"
+        )
 
     # ------------------------------------------------------------------
     # Phase 2: Execute
@@ -361,8 +465,7 @@ class TinyTSAgent:
         return None
 
     def _build_system_prompt(self, plan: UserTaskPlan) -> str:
-        """Build task-specific system prompt — no step enumeration."""
-        tool_name = "train_and_explain_forecast" if plan.needs_explanation else "train_forecast_model"
+        """Build task-specific system prompt."""
         models_str = ", ".join(plan.models_included)
 
         if plan.counterfactual_type == "forward":
@@ -387,7 +490,7 @@ class TinyTSAgent:
                 )
             else:
                 workflow = FORECAST_WORKFLOW.format(
-                    models=models_str, tool_name=tool_name,
+                    models=models_str,
                     horizon=plan.horizon,
                 )
 

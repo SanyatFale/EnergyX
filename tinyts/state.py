@@ -64,6 +64,8 @@ class DataProfile(BaseModel):
     datetime_columns: List[str] = Field(default_factory=list)
     numeric_columns: List[str] = Field(default_factory=list)
     categorical_columns: List[str] = Field(default_factory=list)
+    categorical_values: Dict[str, List[str]] = Field(default_factory=dict)
+    # {"meter_type": ["electricity", "chilledwater", "steam"]}
 
     # All DatasetSummary fields
     time_column: str
@@ -99,6 +101,8 @@ class UserTaskPlan(BaseModel):
     is_multivariate: bool = False
     target_column: str
     feature_columns: List[str] = Field(default_factory=list)
+    data_filters: List[Dict[str, str]] = Field(default_factory=list)
+    # [{"column": "meter_type", "op": "==", "value": "electricity"}]
     horizon: Optional[int] = None
     models_included: List[str] = Field(default_factory=list)
     models_excluded: List[str] = Field(default_factory=list)
@@ -177,7 +181,7 @@ class EnsembleStrategy(BaseModel):
 class ExplainabilityResult(BaseModel):
     """Results from the explainability suite.
 
-    Ported from OwnSolarCast explain.py — holds all computed metrics
+    holds all computed metrics
     plus the LLM-generated explanation.
     """
 
