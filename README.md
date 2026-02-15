@@ -1,4 +1,4 @@
-# TinyTS-Scientist
+# ChronoWatt
 
 An **agentic time-series forecasting and anomaly detection system** with multi-layered explainability. The system uses LLM-driven tool calling to autonomously profile data, train models, detect anomalies, and generate grounded explanations combining statistical metrics, model attributions, feature analysis, counterfactual reasoning, and contextual snapshots.
 
