@@ -2,8 +2,6 @@
 
 An **agentic time-series forecasting and anomaly detection system** with multi-layered explainability. The system uses LLM-driven tool calling to autonomously profile data, train models, detect anomalies, and generate grounded explanations combining statistical metrics, model attributions, feature analysis, counterfactual reasoning, and contextual snapshots.
 
-Submitted to the **ICLR 2026 Workshop on Time Series in the Age of Large Models (TSALM)**.
-
 ## Key Contributions
 
 1. **Agentic Architecture**: LLM autonomously orchestrates a pipeline of forecasting/anomaly tools via native tool calling, with human-in-the-loop plan approval.
