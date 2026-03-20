@@ -1,4 +1,4 @@
-"""Command-line interface for TinyTS-Scientist."""
+"""Command-line interface for EnergyX."""
 
 import json
 import logging
@@ -12,7 +12,7 @@ from rich.table import Table
 
 app = typer.Typer(
     name="tinyts",
-    help="TinyTS-Scientist: A Local, Human-in-the-Loop Agentic Time-Series System",
+    help="EnergyX: A Local, Human-in-the-Loop Agentic Time-Series System",
 )
 
 console = Console()
@@ -39,7 +39,7 @@ def run(
     log_level: str = typer.Option("INFO", "--log-level", "-l", help="Logging level"),
     auto_approve: bool = typer.Option(False, "--yes", "-Y", help="Auto-approve the plan without prompting"),
 ):
-    """Run TinyTS-Scientist workflow on a dataset.
+    """Run EnergyX workflow on a dataset.
 
     Example:
         tinyts run data.csv --time date --target sales --query "forecast next 7 days"
@@ -166,7 +166,7 @@ def run(
 def version():
     """Show version information."""
     from tinyts import __version__
-    console.print(f"TinyTS-Scientist version {__version__}")
+    console.print(f"EnergyX version {__version__}")
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ from tinyts.state import UserTaskPlan
 
 logger = logging.getLogger(__name__)
 
-BASE_PROMPT = """You are TinyTS-Scientist, an expert time series analysis agent.
+BASE_PROMPT = """You are EnergyX, an expert time series analysis agent.
 
 PROTOCOL:
 - Call ONE tool per response. No text, just the tool call.

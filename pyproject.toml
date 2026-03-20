@@ -1,5 +1,5 @@
 [project]
-name = "tinyts-scientist"
+name = "EnergyX"
 version = "0.1.0"
 description = "An agentic time-series forecasting and anomaly detection system with multi-layered explainability"
 readme = "README.md"

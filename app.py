@@ -1,5 +1,5 @@
 """
-TinyTS-Scientist - Streamlit Application
+EnergyX - Streamlit Application
 =========================================
 Interactive chat UI using central LLM agent with tool calling.
 No LangGraph — the agent calls tools directly.
@@ -20,7 +20,7 @@ from tinyts.config import settings
 # Page config
 # =========================================================================
 st.set_page_config(
-    page_title="TinyTS-Scientist",
+    page_title="EnergyX",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -46,7 +46,7 @@ _DEFAULTS: Dict = {
         {
             "role": "assistant",
             "content": (
-                "**Welcome to TinyTS-Scientist!**\n\n"
+                "**Welcome to EnergyX!**\n\n"
                 "Upload a CSV in the sidebar or pick one from the data/ folder, "
                 "then tell me what you'd like to do:\n\n"
                 "- *Forecast energy for next 7 days*\n"
@@ -96,7 +96,7 @@ def _list_data_files() -> List[str]:
 # Sidebar
 # =========================================================================
 with st.sidebar:
-    st.title("TinyTS-Scientist")
+    st.title("EnergyX")
     st.caption("Agentic Time-Series Analysis")
     st.divider()
 
@@ -168,7 +168,7 @@ with st.sidebar:
 # =========================================================================
 # Main area
 # =========================================================================
-st.title("TinyTS-Scientist")
+st.title("EnergyX")
 st.caption("Agentic Time-Series Forecasting & Anomaly Detection")
 
 # --- Chat history ---
@@ -469,4 +469,4 @@ if prompt:
 # Footer
 # =========================================================================
 st.divider()
-st.caption("TinyTS-Scientist")
+st.caption("EnergyX")

@@ -1,4 +1,4 @@
-"""Configuration management for TinyTS-Scientist."""
+"""Configuration management for EnergyX."""
 
 import os
 from pathlib import Path

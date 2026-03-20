@@ -1,4 +1,4 @@
-# TinyTS-Scientist — Pinned dependencies for reproducibility
+# EnergyX — Pinned dependencies for reproducibility
 # Python 3.10+
 
 # LangChain ecosystem

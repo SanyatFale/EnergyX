@@ -1,10 +1,10 @@
 #!/bin/bash
-# TinyTS-Scientist — Setup Script
+# EnergyX — Setup Script
 # Usage: bash setup.sh
 
 set -e
 
-echo "TinyTS-Scientist Setup"
+echo "EnergyX Setup"
 echo "======================"
 echo ""
 

@@ -1,5 +1,5 @@
 """
-TinyTS-Scientist — Stacking Ensemble Learning Experiment
+EnergyX — Stacking Ensemble Learning Experiment
 =========================================================
 True ensemble learning via stacking: a meta-learner trained on
 out-of-fold base model predictions (not just aggregation).
@@ -577,7 +577,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║   TinyTS-Scientist — Stacking Ensemble Learning Experiment     ║")
+    print("║   EnergyX — Stacking Ensemble Learning Experiment     ║")
     print("║   ICLR 2026 TSALM Workshop                                    ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
     print(f"  Base models:  {BASE_MODELS}")

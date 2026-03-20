@@ -1,4 +1,4 @@
-"""Main entry point for TinyTS-Scientist."""
+"""Main entry point for EnergyX."""
 
 from tinyts.cli import app
 

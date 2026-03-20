@@ -1,6 +1,6 @@
 # Architecture
 
-TinyTS-Scientist is an agentic system where an LLM autonomously orchestrates time-series forecasting, anomaly detection, and explainability through native tool calling. This document details the system design with emphasis on the agentic loop and explainability pipeline.
+EnergyX is an agentic system where an LLM autonomously orchestrates time-series forecasting, anomaly detection, and explainability through native tool calling. This document details the system design with emphasis on the agentic loop and explainability pipeline.
 
 ## Design Principles
 

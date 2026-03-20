@@ -1,5 +1,5 @@
 """
-TinyTS-Scientist — ETT Forecasting Benchmark
+EnergyX — ETT Forecasting Benchmark
 =============================================
 ICLR 2026 TSALM Workshop Evaluation
 
@@ -930,13 +930,13 @@ def print_summary(df):
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="TinyTS-Scientist ETT Benchmark")
+    parser = argparse.ArgumentParser(description="EnergyX ETT Benchmark")
     parser.add_argument("--fast", action="store_true",
                         help="Quick sanity check (2 datasets, horizon=24)")
     args = parser.parse_args()
 
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║        TinyTS-Scientist — ETT Forecasting Benchmark            ║")
+    print("║        EnergyX — ETT Forecasting Benchmark            ║")
     print("║        ICLR 2026 TSALM Workshop                                ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
     print(f"  Datasets:    {list(DATASETS.keys())}")

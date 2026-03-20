@@ -1,7 +1,7 @@
 .PHONY: setup run cli test clean help
 
 help:
-	@echo "TinyTS-Scientist"
+	@echo "EnergyX"
 	@echo ""
 	@echo "  make setup     Create venv and install dependencies"
 	@echo "  make run       Launch Streamlit UI"
