@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     cerebras_model: str = Field(default="llama-3.3-70b")
     cerebras_base_url: str = Field(default="https://api.cerebras.ai/v1")
 
+    # OpenRouter Configuration (cloud, OpenAI-compatible)
+    openrouter_api_key: str = Field(default="")
+    openrouter_model: str = Field(default="meta-llama/llama-3.3-70b-instruct")
+    openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1")
+
     # Temperature settings (two-LLM pattern)
     routing_temperature: float = Field(default=0.1)
     synthesis_temperature: float = Field(default=0.7)
@@ -71,6 +76,18 @@ def get_llm(temperature: float = 0.1):
             api_key=settings.cerebras_api_key,
             model=settings.cerebras_model,
             temperature=temperature,
+        )
+    elif settings.llm_provider == "openrouter":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            base_url=settings.openrouter_base_url,
+            api_key=settings.openrouter_api_key,
+            model=settings.openrouter_model,
+            temperature=temperature,
+            default_headers={
+                "HTTP-Referer": "https://github.com/EnergyX",
+                "X-Title": "EnergyX",
+            },
         )
     else:
         from langchain_ollama import ChatOllama
