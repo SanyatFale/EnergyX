@@ -14,8 +14,8 @@ An **agentic time-series forecasting and anomaly detection system** with multi-l
 ### Prerequisites
 
 - Python 3.10+
-- A Cerebras API key (free tier) **or** a local Ollama installation
-
+- A Cerebras/Openrouter API key (free tier) **or** a local Ollama installation
+- Clarification on LLM provider [note](#note) 
 ### Installation
 
 ```bash
@@ -28,7 +28,7 @@ pip install -r requirements.txt
 
 # Configure environment
 cp .env.example .env
-# Edit .env: set LLM_PROVIDER and CEREBRAS_API_KEY (or OLLAMA settings)
+# Edit .env: set LLM_PROVIDER and CEREBRAS_API_KEY/OPENROUTER_API_KEY (or OLLAMA settings)
 ```
 
 ### Run the Streamlit UI
@@ -123,10 +123,10 @@ data/
 
 ```bash
 # .env
-LLM_PROVIDER=cerebras              # or "ollama"
-CEREBRAS_API_KEY=your_key_here
-CEREBRAS_MODEL=llama-3.3-70b
-CEREBRAS_BASE_URL=https://api.cerebras.ai/v1
+LLM_PROVIDER=openrouter              # or "ollama"
+OPENROUTER_API_KEY=your_key_here
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 ROUTING_TEMPERATURE=0.1
 SYNTHESIS_TEMPERATURE=0.7
 DEVICE=cpu                         # or "cuda"
@@ -141,6 +141,9 @@ pip install -r requirements.txt    # Pinned versions
 # Deterministic seeds
 RANDOM_SEED=42                     # In .env, used by all stochastic models
 ```
+
+## Note
+This project was developed when llama 3.3-70B was available as a free tier model on Cerebras but they have since restricted their free tier, so I recommend Openrouter with meta-llama/llama-3.3-70b-instruct. It is significantly slower than the Cerebras model calls but performs decently.
 
 ## License
 
