@@ -709,6 +709,7 @@ def evaluate(datasets=None, horizons=None, fast=False):
         horizons = [24]
 
     rows = []
+    timing_rows = []   # per-model timing: cv_s, train_s, infer_s
 
     for ds_name, ds_path in datasets.items():
         print(f"\n{'=' * 70}")
@@ -729,43 +730,91 @@ def evaluate(datasets=None, horizons=None, fast=False):
         for horizon in horizons:
             print(f"\n  ── Horizon {horizon} {'─' * 50}")
 
-            # ── Phase 1: CV param search (mirrors agent) ──
-            print("     CV param search …", end="", flush=True)
-            t0 = time.time()
+            # ── Phase 1: CV param search (per-model timed) ──────────────────
+            print("     CV param search (per model):")
+            cv_times = {}
 
-            ets_params, _    = cv_search_ets(y_train, horizon, sp)
-            rf_uni_p, _      = cv_search_rf_uni(y_train, horizon)
-            lgbm_uni_p, _    = cv_search_lgbm_uni(y_train, horizon)
-            rf_mv_p, _       = cv_search_rf_mv(y_train, X_train, horizon)
-            lgbm_mv_p, _     = cv_search_lgbm_mv(y_train, X_train, horizon)
-            rf_comb_p, _     = cv_search_rf_combined(y_train, X_train, horizon)
-            lgbm_comb_p, _   = cv_search_lgbm_combined(y_train, X_train, horizon)
-            nbeats_p, _      = cv_search_nbeats(y_train, horizon)
+            t0 = time.perf_counter()
+            ets_params, _  = cv_search_ets(y_train, horizon, sp)
+            cv_times["ETS"] = time.perf_counter() - t0
+            print(f"       ETS          {cv_times['ETS']:5.1f}s  best={ets_params}")
 
-            print(f" {time.time() - t0:.0f}s")
+            t0 = time.perf_counter()
+            rf_uni_p, _    = cv_search_rf_uni(y_train, horizon)
+            cv_times["RF_uni"] = time.perf_counter() - t0
+            print(f"       RF_uni       {cv_times['RF_uni']:5.1f}s  n_lags={rf_uni_p.get('n_lags')}, trees={rf_uni_p.get('n_estimators')}, depth={rf_uni_p.get('max_depth')}")
 
-            # Print best params
-            print(f"     ETS best:          {ets_params}")
-            print(f"     RF_uni best:       n_lags={rf_uni_p.get('n_lags')}, trees={rf_uni_p.get('n_estimators')}, depth={rf_uni_p.get('max_depth')}")
-            print(f"     LightGBM_uni best: n_lags={lgbm_uni_p.get('n_lags')}, leaves={lgbm_uni_p.get('num_leaves')}, lr={lgbm_uni_p.get('learning_rate')}")
-            print(f"     RF_combined best:  n_lags={rf_comb_p.get('n_lags')}, trees={rf_comb_p.get('n_estimators')}")
-            print(f"     LGBM_combined best:n_lags={lgbm_comb_p.get('n_lags')}, leaves={lgbm_comb_p.get('num_leaves')}")
-            print(f"     N-BEATS best:      n_lags={nbeats_p.get('n_lags')}, hidden={nbeats_p.get('hidden_size')}, epochs={nbeats_p.get('epochs')}")
+            t0 = time.perf_counter()
+            lgbm_uni_p, _  = cv_search_lgbm_uni(y_train, horizon)
+            cv_times["LightGBM_uni"] = time.perf_counter() - t0
+            print(f"       LightGBM_uni {cv_times['LightGBM_uni']:5.1f}s  n_lags={lgbm_uni_p.get('n_lags')}, leaves={lgbm_uni_p.get('num_leaves')}, lr={lgbm_uni_p.get('learning_rate')}")
 
-            # ── Phase 2: Train final models on full training set ──
-            print("     Training final models …", end="", flush=True)
-            t0 = time.time()
+            t0 = time.perf_counter()
+            rf_mv_p, _     = cv_search_rf_mv(y_train, X_train, horizon)
+            cv_times["RF_mv"] = time.perf_counter() - t0
+            print(f"       RF_mv        {cv_times['RF_mv']:5.1f}s  trees={rf_mv_p.get('n_estimators')}, depth={rf_mv_p.get('max_depth')}")
 
+            t0 = time.perf_counter()
+            lgbm_mv_p, _   = cv_search_lgbm_mv(y_train, X_train, horizon)
+            cv_times["LightGBM_mv"] = time.perf_counter() - t0
+            print(f"       LightGBM_mv  {cv_times['LightGBM_mv']:5.1f}s  leaves={lgbm_mv_p.get('num_leaves')}, lr={lgbm_mv_p.get('learning_rate')}")
+
+            t0 = time.perf_counter()
+            rf_comb_p, _   = cv_search_rf_combined(y_train, X_train, horizon)
+            cv_times["RF_combined"] = time.perf_counter() - t0
+            print(f"       RF_combined  {cv_times['RF_combined']:5.1f}s  n_lags={rf_comb_p.get('n_lags')}, trees={rf_comb_p.get('n_estimators')}")
+
+            t0 = time.perf_counter()
+            lgbm_comb_p, _ = cv_search_lgbm_combined(y_train, X_train, horizon)
+            cv_times["LightGBM_combined"] = time.perf_counter() - t0
+            print(f"       LGBM_combined{cv_times['LightGBM_combined']:5.1f}s  n_lags={lgbm_comb_p.get('n_lags')}, leaves={lgbm_comb_p.get('num_leaves')}")
+
+            t0 = time.perf_counter()
+            nbeats_p, _    = cv_search_nbeats(y_train, horizon)
+            cv_times["N-BEATS"] = time.perf_counter() - t0
+            print(f"       N-BEATS      {cv_times['N-BEATS']:5.1f}s  n_lags={nbeats_p.get('n_lags')}, hidden={nbeats_p.get('hidden_size')}, epochs={nbeats_p.get('epochs')}")
+            print(f"       Total CV     {sum(cv_times.values()):5.1f}s")
+
+            # ── Phase 2: Train final models (per-model timed) ────────────────
+            print("     Training final models (per model):")
+            train_times = {}
             trained = {}
-            trained["RF_uni"]          = train_final_rf_uni(y_train, rf_uni_p)
-            trained["LightGBM_uni"]    = train_final_lgbm_uni(y_train, lgbm_uni_p)
-            trained["RF_mv"]           = train_final_rf_mv(X_train, y_train, rf_mv_p)
-            trained["LightGBM_mv"]     = train_final_lgbm_mv(X_train, y_train, lgbm_mv_p)
-            trained["RF_combined"]     = train_final_rf_combined(y_train, X_train, rf_comb_p)
-            trained["LightGBM_combined"] = train_final_lgbm_combined(y_train, X_train, lgbm_comb_p)
-            trained["N-BEATS"]         = train_final_nbeats(y_train, nbeats_p)
 
-            print(f" {time.time() - t0:.1f}s")
+            t0 = time.perf_counter()
+            trained["RF_uni"] = train_final_rf_uni(y_train, rf_uni_p)
+            train_times["RF_uni"] = time.perf_counter() - t0
+            print(f"       RF_uni           {train_times['RF_uni']:.2f}s")
+
+            t0 = time.perf_counter()
+            trained["LightGBM_uni"] = train_final_lgbm_uni(y_train, lgbm_uni_p)
+            train_times["LightGBM_uni"] = time.perf_counter() - t0
+            print(f"       LightGBM_uni     {train_times['LightGBM_uni']:.2f}s")
+
+            t0 = time.perf_counter()
+            trained["RF_mv"] = train_final_rf_mv(X_train, y_train, rf_mv_p)
+            train_times["RF_mv"] = time.perf_counter() - t0
+            print(f"       RF_mv            {train_times['RF_mv']:.2f}s")
+
+            t0 = time.perf_counter()
+            trained["LightGBM_mv"] = train_final_lgbm_mv(X_train, y_train, lgbm_mv_p)
+            train_times["LightGBM_mv"] = time.perf_counter() - t0
+            print(f"       LightGBM_mv      {train_times['LightGBM_mv']:.2f}s")
+
+            t0 = time.perf_counter()
+            trained["RF_combined"] = train_final_rf_combined(y_train, X_train, rf_comb_p)
+            train_times["RF_combined"] = time.perf_counter() - t0
+            print(f"       RF_combined      {train_times['RF_combined']:.2f}s")
+
+            t0 = time.perf_counter()
+            trained["LightGBM_combined"] = train_final_lgbm_combined(y_train, X_train, lgbm_comb_p)
+            train_times["LightGBM_combined"] = time.perf_counter() - t0
+            print(f"       LightGBM_combined{train_times['LightGBM_combined']:.2f}s")
+
+            t0 = time.perf_counter()
+            trained["N-BEATS"] = train_final_nbeats(y_train, nbeats_p)
+            train_times["N-BEATS"] = time.perf_counter() - t0
+            print(f"       N-BEATS          {train_times['N-BEATS']:.2f}s")
+            print(f"       Total train      {sum(train_times.values()):.2f}s")
 
             # ── Phase 3: Rolling-origin evaluation ──
             total_windows = (len(y_test) - horizon) // horizon + 1
@@ -787,6 +836,7 @@ def evaluate(datasets=None, horizons=None, fast=False):
                 "RF_combined", "LightGBM_combined",
             ]
             preds_store = {m: [] for m in ALL_MODELS}
+            infer_times = {m: 0.0 for m in ALL_MODELS}
             actuals_store = []
 
             for wi, origin in enumerate(origins):
@@ -803,24 +853,36 @@ def evaluate(datasets=None, horizons=None, fast=False):
                 has_exog = len(X_win) >= horizon
 
                 # --- Statistical (re-fit per window, same as agent per-call) ---
-                preds_store["Naive"].append(forecast_naive(y_ctx, horizon))
-                preds_store["SeasonalNaive"].append(forecast_seasonal_naive(y_ctx, horizon, sp))
-                preds_store["ARIMA"].append(forecast_arima(y_ctx, horizon))
-                preds_store["ETS"].append(
-                    _fit_predict_ets(y_ctx, horizon, **ets_params)
-                    if True else np.full(horizon, y_ctx[-1])
-                )
+                for _nm, _fn_args in [
+                    ("Naive",        lambda: forecast_naive(y_ctx, horizon)),
+                    ("SeasonalNaive",lambda: forecast_seasonal_naive(y_ctx, horizon, sp)),
+                    ("ARIMA",        lambda: forecast_arima(y_ctx, horizon)),
+                    ("ETS",          lambda: _fit_predict_ets(y_ctx, horizon, **ets_params)),
+                ]:
+                    _t = time.perf_counter()
+                    preds_store[_nm].append(_fn_args())
+                    infer_times[_nm] += time.perf_counter() - _t
 
                 # --- Tree / Neural (trained once, inference per window) ---
-                preds_store["N-BEATS"].append(trained["N-BEATS"].forecast(y_ctx, horizon))
-                preds_store["RF_uni"].append(trained["RF_uni"].forecast(y_ctx, horizon))
-                preds_store["LightGBM_uni"].append(trained["LightGBM_uni"].forecast(y_ctx, horizon))
+                for _nm, _fn in [
+                    ("N-BEATS",      lambda: trained["N-BEATS"].forecast(y_ctx, horizon)),
+                    ("RF_uni",       lambda: trained["RF_uni"].forecast(y_ctx, horizon)),
+                    ("LightGBM_uni", lambda: trained["LightGBM_uni"].forecast(y_ctx, horizon)),
+                ]:
+                    _t = time.perf_counter()
+                    preds_store[_nm].append(_fn())
+                    infer_times[_nm] += time.perf_counter() - _t
 
                 if has_exog:
-                    preds_store["RF_mv"].append(trained["RF_mv"].forecast(X_win, horizon))
-                    preds_store["LightGBM_mv"].append(trained["LightGBM_mv"].forecast(X_win, horizon))
-                    preds_store["RF_combined"].append(trained["RF_combined"].forecast(y_ctx, X_win, horizon))
-                    preds_store["LightGBM_combined"].append(trained["LightGBM_combined"].forecast(y_ctx, X_win, horizon))
+                    for _nm, _fn in [
+                        ("RF_mv",              lambda: trained["RF_mv"].forecast(X_win, horizon)),
+                        ("LightGBM_mv",        lambda: trained["LightGBM_mv"].forecast(X_win, horizon)),
+                        ("RF_combined",        lambda: trained["RF_combined"].forecast(y_ctx, X_win, horizon)),
+                        ("LightGBM_combined",  lambda: trained["LightGBM_combined"].forecast(y_ctx, X_win, horizon)),
+                    ]:
+                        _t = time.perf_counter()
+                        preds_store[_nm].append(_fn())
+                        infer_times[_nm] += time.perf_counter() - _t
                 else:
                     for nm in ["RF_mv", "LightGBM_mv", "RF_combined", "LightGBM_combined"]:
                         preds_store[nm].append(np.full(horizon, y_ctx[-1]))
@@ -831,13 +893,16 @@ def evaluate(datasets=None, horizons=None, fast=False):
             if not actuals_store:
                 continue
 
-            # ── Aggregate metrics ──
+            # ── Aggregate metrics ──────────────────────────────────────────────
             y_true_all = np.concatenate(actuals_store)
             model_concat = {}
             model_smapes = {}
 
-            print(f"\n     {'Model':<22s} {'MAE':>9s} {'RMSE':>9s} {'SMAPE%':>8s} {'MASE':>8s}")
-            print(f"     {'─' * 58}")
+            print(
+                f"\n     {'Model':<22s} {'MAE':>9s} {'RMSE':>9s}"
+                f" {'SMAPE%':>8s} {'MASE':>8s} {'Infer(s)':>10s}"
+            )
+            print(f"     {'─' * 70}")
 
             for name in ALL_MODELS:
                 y_pred_all = np.concatenate(preds_store[name])
@@ -846,14 +911,22 @@ def evaluate(datasets=None, horizons=None, fast=False):
                 model_concat[name] = y_pred_all
                 m = compute_metrics(y_true_all, y_pred_all, y_train, sp)
                 model_smapes[name] = m["SMAPE"]
+                infer_s = infer_times[name]
                 rows.append({"dataset": ds_name, "horizon": horizon, "model": name, **m})
+                timing_rows.append({
+                    "dataset": ds_name, "horizon": horizon, "model": name,
+                    "cv_s":    cv_times.get(name, 0.0),
+                    "train_s": train_times.get(name, 0.0),
+                    "infer_s": infer_s,
+                    "total_s": cv_times.get(name, 0.0) + train_times.get(name, 0.0) + infer_s,
+                })
                 print(
-                    f"     {name:<22s} {m['MAE']:9.3f} {m['RMSE']:9.3f} "
-                    f"{m['SMAPE']:7.2f}% {m['MASE']:8.4f}"
+                    f"     {name:<22s} {m['MAE']:9.3f} {m['RMSE']:9.3f}"
+                    f" {m['SMAPE']:7.2f}% {m['MASE']:8.4f} {infer_s:10.2f}s"
                 )
 
-            # ── Ensembles ──
-            print(f"     {'─' * 58}")
+            # ── Ensembles ──────────────────────────────────────────────────────
+            print(f"     {'─' * 70}")
             ENSEMBLE_FNS = [
                 ("Ens_InvSMAPE", ens_inv_smape),
                 ("Ens_Best",     ens_best),
@@ -864,20 +937,32 @@ def evaluate(datasets=None, horizons=None, fast=False):
                 ens_preds, label = ens_fn(model_concat, model_smapes)
                 em = compute_metrics(y_true_all, ens_preds, y_train, sp)
                 rows.append({"dataset": ds_name, "horizon": horizon, "model": ens_name, **em})
+                timing_rows.append({
+                    "dataset": ds_name, "horizon": horizon, "model": ens_name,
+                    "cv_s": sum(cv_times.values()),
+                    "train_s": sum(train_times.values()),
+                    "infer_s": 0.0,
+                    "total_s": sum(cv_times.values()) + sum(train_times.values()),
+                })
                 print(
-                    f"     {ens_name:<22s} {em['MAE']:9.3f} {em['RMSE']:9.3f} "
-                    f"{em['SMAPE']:7.2f}% {em['MASE']:8.4f}  ({label})"
+                    f"     {ens_name:<22s} {em['MAE']:9.3f} {em['RMSE']:9.3f}"
+                    f" {em['SMAPE']:7.2f}% {em['MASE']:8.4f}  ({label})"
                 )
 
-    # ── Save ──
+    # ── Save ──────────────────────────────────────────────────────────────────
     df = pd.DataFrame(rows)
+    df_timing = pd.DataFrame(timing_rows)
     out_dir = ROOT / "outputs" / "benchmark"
     out_dir.mkdir(parents=True, exist_ok=True)
     csv_path = out_dir / "ett_benchmark_results.csv"
+    tim_path = out_dir / "ett_timing.csv"
     df.to_csv(csv_path, index=False)
+    df_timing.to_csv(tim_path, index=False)
     print(f"\nResults saved to {csv_path}")
+    print(f"Timing  saved to {tim_path}")
 
     print_summary(df)
+    print_timing_summary(df_timing)
     return df
 
 
@@ -925,6 +1010,32 @@ def print_summary(df):
             f"  {ds:<8s} {h:4d}  {best['model']:<22s} "
             f"{best['MAE']:9.3f} {best['SMAPE']:7.2f}%"
         )
+
+
+def print_timing_summary(df_timing: pd.DataFrame):
+    """Print per-model timing: CV search, final training, and inference seconds."""
+    print(f"\n{'=' * 70}")
+    print("  TIMING SUMMARY — Mean across datasets (seconds)")
+    print(f"{'=' * 70}")
+
+    for h in sorted(df_timing["horizon"].unique()):
+        sub = df_timing[df_timing["horizon"] == h]
+        agg = (
+            sub.groupby("model")[["cv_s", "train_s", "infer_s", "total_s"]]
+            .mean()
+            .sort_values("total_s", ascending=False)
+        )
+        print(f"\n  Horizon = {h}")
+        print(
+            f"  {'Model':<24s} {'CV(s)':>8s} {'Train(s)':>9s}"
+            f" {'Infer(s)':>9s} {'Total(s)':>9s}"
+        )
+        print(f"  {'─' * 64}")
+        for name, row in agg.iterrows():
+            print(
+                f"  {name:<24s} {row['cv_s']:8.2f} {row['train_s']:9.2f}"
+                f" {row['infer_s']:9.2f} {row['total_s']:9.2f}"
+            )
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
