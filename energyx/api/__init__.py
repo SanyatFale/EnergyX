@@ -1,0 +1,1 @@
+"""EnergyX FastAPI ingest endpoint."""

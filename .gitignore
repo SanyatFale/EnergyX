@@ -32,7 +32,7 @@ ENV/
 *.swp
 *.swo
 *~
-
+.claude
 # Environment
 .env
 
@@ -41,20 +41,25 @@ data/raw/*
 data/processed/*
 !data/raw/.gitkeep
 !data/processed/.gitkeep
-
+data/*
+update/*
+DATA_CARD_COMPLIANCE.md
+LEAD_ANOMALY_RANKING.md
+LEAD_EVALUATION_ANALYSIS.md
+*.csv
 # Outputs
 outputs/
 experiments/
 *.png
 *.jpg
 *.pdf
+*.tex
 
 # Model checkpoints
 checkpoints/
 *.pt
 *.pth
 *.ckpt
-
 # Logs
 logs/
 *.log
@@ -72,3 +77,5 @@ evaluate_forecasting_output_fast.txt
 data/test/ETTm2.csv
 /data
 eval_forecast_output.txt
+PROPOSED_IMPROVEMENTS.md
+UPDATE_REPORT.md
