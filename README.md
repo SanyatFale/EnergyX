@@ -1,145 +1,191 @@
 # EnergyX
 
-An **agentic time-series forecasting and anomaly detection system** with multi-layered explainability. The system uses LLM-driven tool calling to autonomously profile data, train models, detect anomalies, and generate grounded explanations combining statistical metrics, model attributions, feature analysis, counterfactual reasoning, and contextual snapshots.
+A **multi-agent Home Energy Management System** built on the IDEAL residential dataset. An LLM-driven Orchestrator routes natural-language queries to specialised agents that forecast consumption, detect anomalies, explain drivers, and dispatch smart-home control commands. The system operates in two distinct modes: **Online** (live streaming dashboard) and **Offline** (historical batch analysis).
 
 ## Key Contributions
 
-1. **Agentic Architecture**: LLM autonomously orchestrates a pipeline of forecasting/anomaly tools via native tool calling, with human-in-the-loop plan approval.
-2. **Multi-Layered Explainability**: Combines STL decomposition, lag correlations, SHAP values, feature importance, feature correlations, and contextual anomaly snapshots into grounded, interpretable output.
-3. **Counterfactual Analysis**: Forward (what-if scenarios under modified features) and inverse (Nelder-Mead optimization to find feature changes needed to reach a target).
-4. **7-Method Anomaly Ensemble**: Z-score, MAD, Rolling Statistics, IQR, STL Residuals, Isolation Forest, and DBSCAN with majority voting.
+1. **Multi-Agent Architecture** — Orchestrator routes queries to KnowledgeAgent (RAG + regulatory tools), AnalysisAgent (forecasting/anomaly/counterfactual), ControlAgent (HA dispatch), and MonitorAgent (offline batch). OnlineRunner handles the hot path without LLM calls.
+2. **Real-Time Data Bus** — FastAPI process owns a thread-safe LiveBuffer and OnlineRunner. An independent producer script streams IDEAL ticks at configurable speed and density. Streamlit polls via offset-based HTTP endpoints.
+3. **Multi-Layered Explainability** — SHAP, feature importance, STL decomposition, lag correlations, causal attribution, and counterfactual billing, all grounded in IDEAL sensor signals without external weather APIs.
+4. **9-Monitor Pipeline** — Anomaly detection, appliance baseline tracking, habit drift, carbon intensity, real-time cost, budget trajectory, forgot-to-turn-off, demand response, and historic store writer — all running on every live tick.
+5. **RAG Knowledge Layer** — Hybrid BM25 + ChromaDB retrieval over a corpus of UK energy regulations (ECO4, BUS, MEES, Ofgem price cap), efficiency guides, IDEAL dataset docs, and domain Q&A pairs.
 
 ## Quick Start
 
 ### Prerequisites
 
 - Python 3.10+
-- A Cerebras API key (free tier) **or** a local Ollama installation
+- Local Ollama installation (`ollama pull llama3.2:3b`) **or** an OpenRouter API key
+- IDEAL dataset ingested into `data/historic_store/` (see [STARTUP.md](STARTUP.md))
 
 ### Installation
 
 ```bash
-# Clone and enter the repository
-git clone <repo-url> && cd tiny-agent
-
-# Create virtual environment and install
+git clone <repo-url> && cd EnergyX
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# Configure environment
 cp .env.example .env
-# Edit .env: set LLM_PROVIDER and CEREBRAS_API_KEY (or OLLAMA settings)
+# Edit .env — set LLM_PROVIDER and model settings
 ```
 
-### Run the Streamlit UI
+### Run (Offline Mode)
 
 ```bash
 streamlit run app.py
 ```
 
-1. The default dataset (building energy) loads automatically.
-2. Select time/target/feature columns in the sidebar.
-3. Type a query: `"forecast next 3 days"`, `"detect anomalies and explain"`, or `"what if temperature drops by 5 degrees?"`.
-4. Review and approve the plan, then the agent executes autonomously.
+Select a home (home96 / home128 / home62) and date window in the sidebar. Ask questions in the Chat tab: `"forecast next 7 days"`, `"detect anomalies in September"`, `"what drives my consumption?"`.
 
-### Run via CLI
+### Run (Online Mode)
+
+Three processes, three terminals:
 
 ```bash
-python -m tinyts.cli run "data/raw/building_energy_data (copy 1)_elec.csv" \
-  --time timestamp --target meter_reading \
-  --query "forecast next 3 days and explain"
+# Terminal 1 — data bus
+uvicorn energyx.api.main:app --host 0.0.0.0 --port 8000
+
+# Terminal 2 — dashboard (switch to Online in sidebar)
+streamlit run app.py
+
+# Terminal 3 — data producer
+python scripts/stream_ideal.py --home home96 --every 5 --speed 0.05
 ```
+
+See [STARTUP.md](STARTUP.md) for full mode-by-mode instructions.
 
 ## Architecture
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full system design.
-
 ```
-User Query
-    |
-    v
-[Plan Phase]  DataProfiler -> QueryUnderstanding (LLM) -> UserTaskPlan
-    |
-    v
-[Human Approval]  Edit models, horizon, explanation toggles
-    |
-    v
-[Execute Phase]  LLM tool-calling loop:
-    |   train_forecast_model() / train_and_explain_forecast()
-    |   combine_forecasts() / detect_anomalies() / explain_anomalies()
-    |   counterfactual_forward() / counterfactual_inverse()
-    |   generate_report()
-    v
-[Output]  Predictions + Plots + Grounded Explanation
+                    stream_ideal.py
+                         │  POST /ingest/tick
+                         ▼
+                  ┌─────────────┐        ┌──────────────────┐
+                  │  FastAPI    │──────► │  OnlineRunner    │
+                  │  data bus   │        │  9 monitors      │
+                  └─────────────┘        └──────────────────┘
+                         │  GET /live/*
+                         ▼
+                  ┌─────────────┐
+                  │  Streamlit  │
+                  │  dashboard  │
+                  └──────┬──────┘
+                         │ NL query
+                         ▼
+                  ┌─────────────┐
+                  │ Orchestrator│
+                  └──┬──────────┘
+          ┌──────────┼──────────┬────────────┐
+          ▼          ▼          ▼            ▼
+    Knowledge    Analysis    Control      Monitor
+     Agent        Agent       Agent        Agent
+   (RAG/tools) (forecast/  (HA JSON)   (offline
+               anomaly/cf)              batch)
 ```
 
-## Models
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full design.
 
-| Family | Models | Multivariate |
-|--------|--------|:------------:|
-| Statistical | Naive, SeasonalNaive, ARIMA (auto), ETS | No |
-| Tree-based | RandomForest, LightGBM | Yes |
-| Neural | N-BEATS | No |
+## Agent Inventory
 
-## Explainability Layers
+| Agent | Trigger | Capabilities |
+|---|---|---|
+| KnowledgeAgent | R | RAG over corpus, tariff lookup, carbon intensity, incentives |
+| AnalysisAgent | R | Forecast, anomaly, counterfactual, bill prediction, elasticity, causal attribution |
+| ControlAgent | R | NL → HA service-call JSON, schedule flexible loads |
+| MonitorAgent | C/S | Offline batch monitoring, periodic summaries |
+| OnlineRunner | C (hot path) | 9 streaming monitors, no LLM, direct tick processing |
 
-| Layer | Source | Scope |
-|-------|--------|-------|
-| Statistical summary | Train/test split stats | Dataset |
-| STL decomposition | Trend, seasonal, residual | Dataset |
-| Lag correlations | ACF at lags 1, 6, 12, 24 | Dataset |
-| Feature importance | Tree model `.feature_importances_` | Per model |
-| SHAP values | TreeExplainer | Per model |
-| Feature correlations | Pearson with target | Dataset |
-| Anomaly context | 5-value window of target + features | Per anomaly |
-| Counterfactual | Forward (what-if) and inverse (target-seeking) | Scenario |
+## Monitor Inventory (Online Hot Path)
+
+| Monitor | Event Type | Description |
+|---|---|---|
+| AnomalyDetectors | `anomaly.appliance` | Z-score + IQR + STL ensemble |
+| ApplianceBaselineWatcher | — | Rolling per-appliance deviation flags |
+| HabitDriftTracker | `habit.drift` | Slow behavioural shift detection |
+| CarbonTracker | `carbon.realtime` | kWh → gCO₂ via National Grid ESO |
+| RealtimeCostMeter | `cost.realtime` | Live £/hour burn rate |
+| BudgetTrajectoryTracker | — | End-of-month spend projection |
+| HistoricStoreWriter | — | Persists every tick to ParquetBackend |
+| ForgotToTurnOffDetector | `forgot.turn_off` | Appliance on at unusual hours |
+| DemandResponseListener | — | Grid stress signal detection |
+
+## Analysis Tools
+
+| Tool | What it does |
+|---|---|
+| `predict_bill` | Project upcoming bill: consumption forecast × tariff schedule |
+| `counterfactual_bill_forward` | "If heating +20%, how does my bill change?" |
+| `counterfactual_bill_inverse` | "What changes reduce my bill by £40/month?" |
+| `evaluate_tariff_switch` | Replay consumption against alternative tariffs |
+| `causal_attribution` | Decompose consumption change into weather/occupancy/behaviour Δ |
+| `schedule_flexible_loads` | Optimise run times for shiftable appliances, output HA JSON |
+| `suggest_budget_corrections` | Corrective actions when budget trajectory breaches cap |
+| `project_longhorizon` | Annual/multi-year projection with weather normalisation |
+| `compute_elasticity` | Partial dependence (sklearn PDP on RF) per driver feature |
+| `update_degradation_baselines` | Refresh per-appliance consumption baselines |
+
+## IDEAL Dataset
+
+| Property | Value |
+|---|---|
+| Homes | 255 UK households |
+| Enhanced homes (appliance-level) | 39/255 |
+| Sensor types | `electricity_apparent`, `electricity_real`, `gas_pulse`, `temperature_room`, `temperature_probe`, `humidity`, `light`, `appliance_power` |
+| Temperature encoding | Tenths of °C |
+| Gas encoding | Cumulative Wh pulses |
+| Pre-ingested windows | home96: 2017-09-01→14, home128: 2017-10-01→14, home62: 2017-03-01→14 |
 
 ## Project Structure
 
 ```
-app.py                          # Streamlit chat UI
-tinyts/
-  agent.py                      # Central LLM agent (plan + execute)
-  agent_tools.py                # Tool factory with closures (~1200 lines)
-  config.py                     # Settings + get_llm() (Cerebras / Ollama)
-  state.py                      # Pydantic models (UserTaskPlan, etc.)
-  cli.py                        # CLI interface
-  nodes/
-    data_profiler.py            # Frequency, stationarity, seasonality
-    query_understanding.py      # LLM query -> structured plan
-  tools/
-    statistical.py              # Naive, SeasonalNaive, ARIMA, ETS
-    tree_based.py               # RandomForest, LightGBM (uni + multivariate)
-    neural.py                   # N-BEATS
-    anomaly.py                  # 7-method ensemble
-    ensemble.py                 # Weighted combination
-    explainability.py           # SHAP, FI, STL, lags, correlations
-data/
-  raw/                          # Building energy datasets, UCI household power
-  processed/                    # Preprocessed datasets
+app.py                              # Streamlit UI (Online + Offline modes)
+energyx/
+  agents/
+    analysis/agent.py               # AnalysisAgent — plan/execute via LLM tools
+    analysis/new_tools.py           # Energy-specific tool extensions
+    control/agent.py                # ControlAgent — NL → HA JSON
+    knowledge/agent.py              # KnowledgeAgent — RAG + external tools
+    monitor/agent.py                # MonitorAgent — offline batch
+  api/
+    main.py                         # FastAPI data bus (stream lifecycle + polling)
+    live_buffer.py                  # Thread-safe tick + event buffer
+  data/
+    historic_store.py               # ParquetBackend partitioned by home/date
+    events.py                       # BaseEvent dataclass
+  monitoring/
+    online_runner.py                # Hot-path tick processor (no LLM)
+    monitors/                       # 9 streaming monitors
+  orchestrator/
+    orchestrator.py                 # Query router + mode manager
+    router.py                       # classify_query() — keyword/intent routing
+  utils/
+    appliance_forecast.py           # Per-appliance ARIMA+RF ensemble forecast
+    replayer.py                     # Synchronous HistoricStore → OnlineRunner replayer
+knowledge/
+  corpus/                           # Markdown docs: regulatory, efficiency, IDEAL, Q&A
+  index/                            # BM25 pkl + ChromaDB store (pre-built)
+  rag/                              # HybridRetriever, reranker, synthesizer
+  tools/                            # LangChain @tools: carbon, tariff, weather, incentives
+scripts/
+  ingest_ideal.py                   # One-time IDEAL CSV → HistoricStore ingestion
+  stream_ideal.py                   # Live data producer (posts to FastAPI bus)
 ```
 
 ## Configuration
 
 ```bash
 # .env
-LLM_PROVIDER=cerebras              # or "ollama"
-CEREBRAS_API_KEY=your_key_here
-CEREBRAS_MODEL=llama-3.3-70b
-CEREBRAS_BASE_URL=https://api.cerebras.ai/v1
+LLM_PROVIDER=ollama                 # or "openrouter"
+OLLAMA_MODEL=llama3.2:3b
+OLLAMA_BASE_URL=http://localhost:11434/v1
+
+# OpenRouter alternative (comment out ollama lines above)
+# LLM_PROVIDER=openrouter
+# OPENROUTER_API_KEY=sk-or-...
+# OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct
+
 ROUTING_TEMPERATURE=0.1
 SYNTHESIS_TEMPERATURE=0.7
-DEVICE=cpu                         # or "cuda"
-```
-
-## Reproducibility
-
-```bash
-# Exact environment
-pip install -r requirements.txt    # Pinned versions
-
-# Deterministic seeds
-RANDOM_SEED=42                     # In .env, used by all stochastic models
+RANDOM_SEED=42
 ```
 
 ## License

@@ -82,33 +82,6 @@ class KnowledgeAgent:
                 "note": str(e),
             }
 
-    def fetch_weather_forecast(self, location: str = "london") -> Dict[str, Any]:
-        """Fetch weather forecast (Open-Meteo UKMO fallback — no auth required)."""
-        try:
-            import urllib.request
-            # Open-Meteo UKMO fallback (free, no key)
-            url = (
-                "https://api.open-meteo.com/v1/ukmo?"
-                "latitude=51.5&longitude=-0.1&hourly=temperature_2m&forecast_days=3"
-            )
-            with urllib.request.urlopen(url, timeout=10) as resp:
-                data = json.loads(resp.read())
-            temps = data.get("hourly", {}).get("temperature_2m", [])[:24]
-            return {
-                "location": location,
-                "source": "open_meteo_ukmo",
-                "temperature_2m_next_24h": temps,
-                "mean_temp_c": round(sum(temps) / len(temps), 1) if temps else None,
-            }
-        except Exception as e:
-            logger.warning(f"Weather API unavailable: {e}")
-            return {
-                "location": location,
-                "source": "unavailable",
-                "note": str(e),
-                "temperature_2m_next_24h": [],
-            }
-
     def list_applicable_incentives(self, epc_band: Optional[str] = None, jurisdiction: str = "england") -> Dict[str, Any]:
         """List UK energy incentive schemes applicable to the household."""
         schemes = [

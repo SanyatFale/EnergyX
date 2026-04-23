@@ -88,6 +88,25 @@ class TestQueryRouter:
         assert classify_query("Forecast next 7 days", use_llm=False) == "analysis"
         assert classify_query("Explain the anomaly last Tuesday", use_llm=False) == "analysis"
 
+    def test_budget_queries_route_to_analysis(self):
+        assert classify_query("Am I on track with my £120/month budget?", use_llm=False) == "analysis"
+        assert classify_query("Check my monthly budget", use_llm=False) == "analysis"
+
+    def test_bill_queries_route_to_analysis(self):
+        assert classify_query("What changes reduce my bill by £40/month?", use_llm=False) == "analysis"
+        assert classify_query("If heating +20%, how does my bill change?", use_llm=False) == "analysis"
+        assert classify_query("How will my bill change if consumption increases?", use_llm=False) == "analysis"
+
+    def test_tariff_queries_route_to_analysis(self):
+        assert classify_query("Replay consumption against alternative tariffs", use_llm=False) == "analysis"
+        assert classify_query("Evaluate tariff switch to Economy 7", use_llm=False) == "analysis"
+        assert classify_query("Compare my tariff vs Economy 7", use_llm=False) == "analysis"
+        assert classify_query("Would I save on Agile Octopus?", use_llm=False) == "analysis"
+
+    def test_economy7_question_routes_to_knowledge_not_analysis(self):
+        # "How does Economy 7 work?" is a knowledge question, not a tariff switch
+        assert classify_query("How does Economy 7 work?", use_llm=False) == "knowledge"
+
 
 class TestOrchestrator:
     def test_offline_mode_by_default(self, tmp_path):

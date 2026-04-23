@@ -65,10 +65,17 @@ COLUMN RESOLUTION RULES:
     -> target_column="meter_reading", data_filters=[{{"column":"meter_type","op":"==","value":"electricity"}}]
   Example: "air temperature" -> "air_temperature" (underscore tolerance)
   Example: "cloud coverage" -> "cloud_coverage" (fuzzy match)
-- If the user mentions a value that appears in a categorical column, add a data_filters entry for it.
+- data_filters is ONLY for filtering rows by a CATEGORICAL column value the user explicitly names.
+  NEVER add a filter because of a number in the query. Numbers in queries are budgets, horizons,
+  targets or monetary values — NOT filter values.
+  BAD: "next 24 hours" → data_filters=[{{"column":"weather_temp_c","op":"==","value":"24"}}]  ← WRONG
+  BAD: "budget 140 euros" → data_filters=[{{"column":"weather_temp_c","op":"==","value":"14"}}] ← WRONG
+  GOOD: "next 24 hours" → horizon=24*{steps_per_day}, data_filters=[]
+  GOOD: "budget 140 euros" → horizon stays unchanged, data_filters=[]
+- data_filters ONLY when: a categorical column (string type) exists AND the user explicitly names
+  one of its known values (from "Categorical column values" above).
 - target_column MUST be a numeric column from the dataset.
 - feature_columns MUST be numeric columns from the dataset.
-- data_filters values MUST be exact values from the categorical column values listed above.
 - If no filters are needed (no categorical value mentioned, or simple dataset), set data_filters=[].
 - If you cannot confidently resolve a column, use the default: "{default_target_column}"
 

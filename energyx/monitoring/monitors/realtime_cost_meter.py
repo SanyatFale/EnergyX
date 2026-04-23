@@ -27,12 +27,16 @@ class RealtimeCostMeter(BaseMonitor):
 
     applicable_modes: Set[str] = {"online", "offline"}
 
+    _TICK_STRIDE = 50  # fire one event per this many electricity ticks
+
     def __init__(self, config=None, state_store=None):
         super().__init__(config, state_store)
         self._household_id = self._cfg("household_id", self.home_id)
         self._value_col = self._cfg("value_column", "value")
         self._sample_sec = self._cfg("sample_seconds", 1.0)
         self._top_appliances: Dict[str, float] = self._cfg("top_appliances", {})
+        self._elec_tick_count = 0
+        self._rolling_watts: list = []   # last 50 electricity readings for rolling mean
 
     def evaluate(self, tick_or_batch: Any) -> List[CostRealtimeEvent]:
         if isinstance(tick_or_batch, pd.DataFrame):
@@ -40,6 +44,9 @@ class RealtimeCostMeter(BaseMonitor):
         return self._eval_tick(tick_or_batch)
 
     def _eval_tick(self, tick: Dict[str, Any]) -> List[CostRealtimeEvent]:
+        # Only compute cost on electricity readings
+        if tick.get("sensor_type") not in ("electricity_apparent", "electricity_real", None):
+            return []
         watts = tick.get(self._value_col, tick.get("value"))
         if watts is None:
             return []
@@ -47,9 +54,18 @@ class RealtimeCostMeter(BaseMonitor):
             watts = float(watts)
         except (TypeError, ValueError):
             return []
+        # Accumulate for rolling mean
+        self._rolling_watts.append(watts)
+        if len(self._rolling_watts) > 100:
+            self._rolling_watts = self._rolling_watts[-100:]
+        # Throttle: fire once per _TICK_STRIDE electricity ticks
+        self._elec_tick_count += 1
+        if self._elec_tick_count % self._TICK_STRIDE != 1:
+            return []
+        mean_watts = sum(self._rolling_watts) / len(self._rolling_watts)
         ts = self._parse_ts(tick.get("ts"))
         rate = self._get_rate(ts)
-        gbp_per_hour = watts / 1000.0 * rate  # kW * £/kWh = £/h
+        gbp_per_hour = mean_watts / 1000.0 * rate  # kW * £/kWh = £/h
         contributors = self._compute_contributors(rate)
         return [CostRealtimeEvent(
             rate_gbp_per_hour=round(gbp_per_hour, 4),

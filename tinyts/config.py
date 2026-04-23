@@ -16,11 +16,11 @@ class Settings(BaseSettings):
 
     # Ollama Configuration (local)
     ollama_base_url: str = Field(default="http://localhost:11434")
-    ollama_model: str = Field(default="llama3.2:3b")
+    ollama_model: str = Field(default="llama3.1:latest")
 
     # Cerebras Configuration (cloud, OpenAI-compatible)
-    cerebras_api_key: str = Field(default="")
-    cerebras_model: str = Field(default="llama-3.3-70b")
+    cerebras_api_key: str = Field(default="csk-w3w5k8rr8mfcxe5pty48mpr6cnhffvhdppxemm9p6nxfyx3m")
+    cerebras_model: str = Field(default="llama3.1-8b")
     cerebras_base_url: str = Field(default="https://api.cerebras.ai/v1")
 
     # OpenRouter Configuration (cloud, OpenAI-compatible)

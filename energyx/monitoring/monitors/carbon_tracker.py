@@ -33,6 +33,9 @@ class CarbonTracker(BaseMonitor):
 
     applicable_modes: Set[str] = {"online", "offline"}
 
+    # Fire one carbon event per this many electricity ticks to avoid flooding
+    _TICK_STRIDE = 50
+
     def __init__(self, config=None, state_store=None):
         super().__init__(config, state_store)
         self._intensity_src = self._cfg("intensity_source", "fallback")
@@ -41,13 +44,37 @@ class CarbonTracker(BaseMonitor):
         self._value_col = self._cfg("value_column", "value")
         self._sample_sec = self._cfg("sample_seconds", 1.0)
         self._region = self._cfg("region", "national")
+        self._elec_tick_count = 0
+        # Try to seed intensity from National Grid API once at startup
+        self._cached_intensity: Optional[float] = None
+        self._try_fetch_intensity()
 
     def evaluate(self, tick_or_batch: Any) -> List[CarbonRealtimeEvent]:
         if isinstance(tick_or_batch, pd.DataFrame):
             return self._eval_batch(tick_or_batch)
         return self._eval_tick(tick_or_batch)
 
+    def _try_fetch_intensity(self) -> None:
+        """One-shot fetch from National Grid ESO at startup; cached for session."""
+        try:
+            import urllib.request
+            with urllib.request.urlopen(
+                "https://api.carbonintensity.org.uk/intensity", timeout=3
+            ) as resp:
+                import json
+                data = json.loads(resp.read())
+                val = data["data"][0]["intensity"]["actual"] or data["data"][0]["intensity"]["forecast"]
+                if val:
+                    self._cached_intensity = float(val)
+                    self._intensity_src = "api"
+                    logger.info(f"CarbonTracker: live intensity = {val} gCO2/kWh")
+        except Exception:
+            pass  # fallback used instead
+
     def _eval_tick(self, tick: Dict[str, Any]) -> List[CarbonRealtimeEvent]:
+        # Only process electricity readings
+        if tick.get("sensor_type") not in ("electricity_apparent", "electricity_real", None):
+            return []
         watts = tick.get(self._value_col, tick.get("value"))
         if watts is None:
             return []
@@ -55,8 +82,11 @@ class CarbonTracker(BaseMonitor):
             watts = float(watts)
         except (TypeError, ValueError):
             return []
+        # Throttle: fire once per _TICK_STRIDE electricity ticks
+        self._elec_tick_count += 1
+        if self._elec_tick_count % self._TICK_STRIDE != 1:
+            return []
         intensity = self._get_intensity(tick.get("ts"))
-        kwh_per_tick = watts * self._sample_sec / 3600
         return [CarbonRealtimeEvent(
             intensity_gco2_per_kwh=intensity,
             region=self._region,
@@ -78,8 +108,8 @@ class CarbonTracker(BaseMonitor):
         )]
 
     def _get_intensity(self, ts: Optional[str]) -> float:
-        if self._intensity_src == "fallback":
-            return _FALLBACK_INTENSITY
+        if self._cached_intensity is not None:
+            return self._cached_intensity
         if ts and str(ts) in self._intensity_cache:
             return self._intensity_cache[str(ts)]
         return _FALLBACK_INTENSITY

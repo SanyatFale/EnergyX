@@ -3,7 +3,7 @@
 All secrets should be set via environment variables, not hardcoded here.
 Usage::
     from knowledge.config import cfg
-    key = cfg.met_office_api_key
+    key = cfg.octopus_api_key
 """
 
 from __future__ import annotations
@@ -52,9 +52,6 @@ class KnowledgeConfig:
     # ---------------------------------------------------------------------------
     # API keys (read from environment — never hardcode)
     # ---------------------------------------------------------------------------
-    met_office_api_key: Optional[str] = field(
-        default_factory=lambda: os.environ.get("MET_OFFICE_API_KEY")
-    )
     octopus_api_key: Optional[str] = field(
         default_factory=lambda: os.environ.get("OCTOPUS_API_KEY")
     )
@@ -62,8 +59,6 @@ class KnowledgeConfig:
     # ---------------------------------------------------------------------------
     # API endpoints
     # ---------------------------------------------------------------------------
-    met_office_base_url: str = "https://data.hub.api.metoffice.gov.uk/sitespecific/v0/point"
-    open_meteo_base_url: str = "https://api.open-meteo.com/v1/ukmo"
     carbon_intensity_base_url: str = "https://api.carbonintensity.org.uk"
     octopus_base_url: str = "https://api.octopus.energy/v1"
 

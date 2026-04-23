@@ -86,20 +86,36 @@ class TestKnowledgeAgentCarbonIntensity:
         assert result["source"] == "fallback"
 
 
-class TestKnowledgeAgentWeather:
-    def test_weather_forecast_returns_dict(self):
-        agent = KnowledgeAgent()
-        result = agent.fetch_weather_forecast()
-        assert isinstance(result, dict)
-        assert "location" in result
+class TestFetchWeatherForecastTool:
+    """fetch_weather_forecast is now a standalone LangChain tool reading from IDEAL sensors."""
 
-    def test_weather_forecast_fallback_on_no_network(self):
+    def test_weather_tool_returns_json_string(self):
+        import json
+        from knowledge.tools.fetch_weather_forecast import fetch_weather_forecast
+        result = fetch_weather_forecast.invoke({"home_id": "home96"})
+        assert isinstance(result, str)
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+    def test_weather_tool_has_source_field(self):
+        import json
+        from knowledge.tools.fetch_weather_forecast import fetch_weather_forecast
+        result = fetch_weather_forecast.invoke({"home_id": "home96"})
+        parsed = json.loads(result)
+        assert parsed.get("source") == "ideal_sensors"
+
+    def test_weather_tool_fallback_on_store_error(self):
+        import json
         import unittest.mock as mock
-        agent = KnowledgeAgent()
-        with mock.patch("urllib.request.urlopen", side_effect=Exception("no network")):
-            result = agent.fetch_weather_forecast()
-        assert result["source"] == "unavailable"
-        assert result["temperature_2m_next_24h"] == []
+        from knowledge.tools.fetch_weather_forecast import fetch_weather_forecast
+        with mock.patch(
+            "energyx.data.historic_store.get_historic_store",
+            side_effect=Exception("store unavailable"),
+        ):
+            result = fetch_weather_forecast.invoke({"home_id": "home96"})
+        parsed = json.loads(result)
+        assert parsed.get("source") == "ideal_sensors"
+        assert parsed.get("latest_temp_c") is None
 
 
 class TestKnowledgeAgentIncentives:

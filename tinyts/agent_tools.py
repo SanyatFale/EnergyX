@@ -32,49 +32,47 @@ MODEL_TEMPLATES = {
     "SeasonalNaive": {
         "family": "statistical",
         "hyperparameters": {"seasonal_period": 12},
-        "search_space": {"seasonal_period": [7, 12, 24, 30]},
+        "search_space": {},  # fixed default — search adds no value for live assistant
         "supports_multivariate": False,
     },
     "ARIMA": {
         "family": "statistical",
         "hyperparameters": {"p": 1, "d": 1, "q": 1},
-        "search_space": {},  # auto_arima handles order selection
+        "search_space": {},  # auto_arima handles order selection internally
         "supports_multivariate": False,
     },
     "ETS": {
         "family": "statistical",
         "hyperparameters": {"trend": "add", "seasonal": "add", "seasonal_periods": 12},
-        "search_space": {"trend": ["add", "mul", "none"], "seasonal": ["add", "mul", "none"]},
+        "search_space": {},  # fixed additive default — 9-combo grid × 3 folds was too slow
         "supports_multivariate": False,
     },
     "RandomForest": {
         "family": "tree",
-        "hyperparameters": {"n_estimators": 100, "max_depth": 10, "n_lags": 12},
-        "search_space": {
-            "n_estimators": [50, 100, 200],
-            "max_depth": [5, 10, 15],
-            "n_lags": [6, 12, 24],
-        },
+        # Reduced n_estimators: 50 trees is sufficient for short-horizon energy forecasting.
+        # Empty search_space → only 3 CV folds, no grid search (was 10 combos × 3 = 30 fits).
+        # n_lags is now globally defined via DEFAULT_LAG_INDICES in tree_based.py
+        "hyperparameters": {"n_estimators": 50, "max_depth": 10},
+        "search_space": {},
         "supports_multivariate": True,
     },
     "LightGBM": {
         "family": "tree",
+        # Reduced n_estimators: 50 rounds is fast and accurate for 1-min energy data.
+        # Empty search_space → only 3 CV folds (was 10 combos × 3 = 30 fits).
         "hyperparameters": {
             "num_leaves": 31, "learning_rate": 0.1,
-            "n_estimators": 100, "n_lags": 12,
+            "n_estimators": 50,  # n_lags → DEFAULT_LAG_INDICES
         },
-        "search_space": {
-            "num_leaves": [15, 31, 63],
-            "learning_rate": [0.01, 0.1, 0.3],
-            "n_estimators": [50, 100, 200],
-            "n_lags": [6, 12, 24],
-        },
+        "search_space": {},
         "supports_multivariate": True,
     },
     "N-BEATS": {
         "family": "neural",
-        "hyperparameters": {"n_lags": 24, "hidden_size": 64, "epochs": 50, "learning_rate": 0.001},
-        "search_space": {"n_lags": [12, 24, 48], "hidden_size": [32, 64, 128], "epochs": [30, 50, 100]},
+        # Reduced epochs: 15 is enough for convergence on 1-min electricity data.
+        # Empty search_space → 3 CV folds × 15 epochs (was 10 combos × 3 folds × 50 epochs).
+        "hyperparameters": {"n_lags": 1440, "hidden_size": 64, "epochs": 15, "learning_rate": 0.001},
+        "search_space": {},
         "supports_multivariate": False,
     },
 }
@@ -182,6 +180,52 @@ def _cv_univariate(tool_fn, y, cv_folds, horizon, params):
             scores.append(_compute_metric(y[sp:sp + len(preds)], preds))
         except Exception:
             scores.append(float("inf"))
+    return scores or [float("inf")]
+
+
+_TREE_MODEL_NAMES: set = {"RandomForest", "LightGBM"}
+
+
+def _cv_tree_numpy(fit_fn, y: np.ndarray, X_lag: np.ndarray, y_lag: np.ndarray,
+                   cv_folds: int, horizon: int, params: dict,
+                   lag_indices: Optional[List[int]] = None) -> List[float]:
+    """Rolling-origin CV using the pre-computed sparse-lag + Fourier matrix.
+
+    For any split point sp, X_lag[:sp - max_lag] is the correct training slice
+    — identical to rebuilding features from y[:sp] — so we skip both JSON
+    serialisation and feature recomputation for every fold.
+
+    Args:
+        fit_fn:      one of _fit_rf_numpy / _fit_lgbm_numpy
+        y:           full raw series (for y_test slicing and last_window)
+        X_lag:       pre-computed feature matrix (n - max_lag, n_features)
+        y_lag:       pre-computed target vector  (n - max_lag,)
+        lag_indices: sparse lag offsets (matches what was used to build X_lag)
+    """
+    from tinyts.tools.tree_based import DEFAULT_LAG_INDICES
+    if lag_indices is None:
+        lag_indices = DEFAULT_LAG_INDICES
+    max_lag = max(lag_indices)
+    n = len(y)
+    min_train = max(50, horizon * 2) + max_lag
+    scores: List[float] = []
+    step = max(1, (n - min_train - horizon) // cv_folds)
+
+    for i in range(cv_folds):
+        sp = min_train + i * step
+        if sp + horizon > n:
+            break
+        X_tr = X_lag[:sp - max_lag]
+        y_tr = y_lag[:sp - max_lag]
+        last_window = y[sp - max_lag:sp]   # max_lag raw values for recursive forecast
+        y_te = y[sp:sp + horizon]
+        h = min(horizon, n - sp)
+        try:
+            preds, _ = fit_fn(X_tr, y_tr, last_window, h, params, lag_indices)
+            scores.append(_compute_metric(y_te[:len(preds)], np.array(preds)))
+        except Exception:
+            scores.append(float("inf"))
+
     return scores or [float("inf")]
 
 
@@ -364,6 +408,54 @@ def create_agent_tools(
 
     uni_tools, mv_tools = _get_model_tools()
 
+    # ── Pre-compute sparse lag + Fourier feature matrix (once per session) ───
+    # Sparse lags are independent of which tree model is used and of the CV
+    # split point — any split sp maps to X_lag[:sp - max(lag_indices)].
+    # Fourier columns are appended so the model can learn daily/weekly cycles
+    # without needing thousands of additional raw lag columns.
+    # The matrix is persisted to a content-keyed parquet; subsequent Streamlit
+    # reruns with the same 14-day window skip computation entirely (~36 ms read).
+    from tinyts.tools.tree_based import (
+        DEFAULT_LAG_INDICES,
+        create_lagged_features_sparse as _clf_sparse,
+        add_fourier_features as _add_fourier,
+        all_feature_col_names as _feat_col_names,
+        _fit_rf_numpy, _fit_lgbm_numpy,
+    )
+    _LAG_INDICES: List[int] = DEFAULT_LAG_INDICES
+    _MAX_LAG: int = max(_LAG_INDICES)
+    _X_lag: Optional[np.ndarray] = None
+    _y_lag: Optional[np.ndarray] = None
+    _tree_fit_fns: dict = {}
+
+    try:
+        import hashlib
+        _tree_fit_fns = {"RandomForest": _fit_rf_numpy, "LightGBM": _fit_lgbm_numpy}
+
+        _cache_dir = Path("data/feature_cache")
+        _cache_dir.mkdir(parents=True, exist_ok=True)
+        _y_hash = hashlib.md5(y.tobytes()).hexdigest()[:12]
+        # Cache key encodes lag set + Fourier so stale caches are never reused
+        _lag_tag = f"sparse{len(_LAG_INDICES)}_fourier"
+        _cache_path = _cache_dir / f"{_y_hash}_{_lag_tag}.parquet"
+
+        if _cache_path.exists():
+            _lag_df = pd.read_parquet(_cache_path)
+            feat_cols = [c for c in _lag_df.columns if c != "target"]
+            _X_lag = _lag_df[feat_cols].values
+            _y_lag = _lag_df["target"].values
+            logger.info(f"Feature cache hit: {_cache_path.name} ({len(_y_lag)} rows, {len(feat_cols)} features)")
+        else:
+            _X_sparse, _y_lag = _clf_sparse(y, _LAG_INDICES)
+            _X_lag = _add_fourier(_X_sparse, len(_X_sparse), t_offset=_MAX_LAG)
+            _feat_cols = _feat_col_names(_LAG_INDICES)
+            _lag_df = pd.DataFrame(_X_lag, columns=_feat_cols)
+            _lag_df["target"] = _y_lag
+            _lag_df.to_parquet(_cache_path, index=False)
+            logger.info(f"Feature cache saved: {_cache_path.name} ({len(_y_lag)} rows, {len(_feat_cols)} features)")
+    except Exception as _e:
+        logger.warning(f"Feature pre-computation skipped ({_e}); tree CV will fall back to JSON path")
+
     session: Dict[str, Any] = {
         "profile": None,
         "dataset_summary": None,
@@ -453,6 +545,17 @@ def create_agent_tools(
         if not tmpl:
             return json.dumps({"error": f"Unknown model: {model_name}"})
 
+        # Session-level model cache — avoids retraining on repeated queries
+        _y_fp = f"{len(y)}|{round(float(np.nansum(y[:5])), 2)}"
+        _feat_key = ",".join(sorted(feat_cols))
+        _ck = f"{model_name}|{horizon}|{_y_fp}|{_feat_key}"
+        _mc = session.get("_model_cache", {})
+        if _ck in _mc:
+            cached = _mc[_ck]
+            session["model_results"][model_name] = cached["session_data"]
+            logger.info(f"Cache hit: {model_name} horizon={horizon}")
+            return cached["json_result"]
+
         is_mv = (
             bool(feat_cols)
             and tmpl["supports_multivariate"]
@@ -462,10 +565,23 @@ def create_agent_tools(
 
         combos = _param_combinations(tmpl["search_space"]) if tmpl["search_space"] else [tmpl["hyperparameters"]]
 
+        # Use the pre-computed lag matrix for tree models (no JSON round-trip).
+        # Fall back to the JSON tool path when the cache is unavailable.
+        _use_numpy_cv = (
+            not is_mv
+            and model_name in _TREE_MODEL_NAMES
+            and _X_lag is not None
+            and model_name in _tree_fit_fns
+        )
+
         best_score, best_params, best_cv = float("inf"), tmpl["hyperparameters"], []
         for params in combos:
             if is_mv:
                 scores = _cv_multivariate(mv_tools[model_name], y_mv, X, 3, horizon, params)
+            elif _use_numpy_cv:
+                scores = _cv_tree_numpy(
+                    _tree_fit_fns[model_name], y, _X_lag, _y_lag, 3, horizon, params, _LAG_INDICES
+                )
             else:
                 scores = _cv_univariate(uni_tools[model_name], y, 3, horizon, params)
             finite = [s for s in scores if np.isfinite(s)]
@@ -482,6 +598,16 @@ def create_agent_tools(
                 "test_features": json.dumps(test_X.tolist()),
                 "horizon": horizon,
                 **{k: v for k, v in best_params.items() if k != "n_lags"},
+            })
+        elif _use_numpy_cv:
+            # Final fit using full sparse-lag + Fourier matrix — no JSON at all
+            preds_np, meta_np = _tree_fit_fns[model_name](
+                _X_lag, _y_lag, y[-_MAX_LAG:], horizon, best_params, _LAG_INDICES
+            )
+            rj = json.dumps({
+                "model_name": model_name,
+                "predictions": preds_np,
+                "metadata": meta_np,
             })
         else:
             rj = uni_tools[model_name].invoke({
@@ -543,7 +669,13 @@ def create_agent_tools(
         out["status"] = "warning" if _warnings else "ok"
         if _warnings:
             out["warnings"] = _warnings
-        return json.dumps(out)
+        _json_out = json.dumps(out)
+        # Write to session cache
+        session.setdefault("_model_cache", {})[_ck] = {
+            "session_data": session["model_results"][model_name],
+            "json_result":  _json_out,
+        }
+        return _json_out
 
     # ===== TOOL 3: Train + Explain =====
     @tool
@@ -658,10 +790,15 @@ def create_agent_tools(
                 shap_v = compute_shap_values(mdl, X_df.iloc[-min(10, len(X_df)):], feat_cols, model_name)
 
         elif model_name in ("RandomForest", "LightGBM"):
-            from tinyts.tools.tree_based import create_lagged_features
-            nl = bp.get("n_lags", 12)
-            Xl, yl = create_lagged_features(y, nl)
-            lag_names = [f"lag_{i+1}" for i in range(nl)]
+            from tinyts.tools.tree_based import (
+                DEFAULT_LAG_INDICES,
+                create_lagged_features_sparse, add_fourier_features, all_feature_col_names,
+            )
+            _li = DEFAULT_LAG_INDICES
+            _ml = max(_li)
+            Xl, yl = create_lagged_features_sparse(y, _li)
+            Xl = add_fourier_features(Xl, len(Xl), t_offset=_ml)
+            lag_names = all_feature_col_names(_li)
             Xl_df = pd.DataFrame(Xl, columns=lag_names)
             if model_name == "RandomForest":
                 from sklearn.ensemble import RandomForestRegressor

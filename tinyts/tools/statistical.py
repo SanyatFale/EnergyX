@@ -122,8 +122,8 @@ def train_arima_forecaster(
                 import pmdarima as pm
                 auto_model = pm.auto_arima(
                     y_train,
-                    start_p=0, max_p=5,
-                    start_q=0, max_q=5,
+                    start_p=0, max_p=2,
+                    start_q=0, max_q=2,
                     start_d=0, max_d=2,
                     seasonal=False,
                     stepwise=True,
