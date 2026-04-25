@@ -32,7 +32,7 @@ class KnowledgeConfig:
     # ---------------------------------------------------------------------------
     # Embedding model
     # ---------------------------------------------------------------------------
-    embedding_model: str = "BAAI/bge-large-en-v1.5"
+    embedding_model: str = "all-MiniLM-L6-v2"
     embedding_device: str = "cpu"        # "cuda" if GPU available
     chunk_overlap_sentences: int = 1
 
@@ -40,7 +40,7 @@ class KnowledgeConfig:
     # Reranker
     # ---------------------------------------------------------------------------
     reranker_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
-    reranker_top_n: int = 5
+    reranker_top_n: int = 3
 
     # ---------------------------------------------------------------------------
     # Retrieval settings

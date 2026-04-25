@@ -1,0 +1,75 @@
+{"id": "R001", "query": "Forecast my electricity usage for the next 24 hours", "label": "analysis", "difficulty": "easy", "notes": "forecast keyword fires _ANALYSIS_KW directly"}
+{"id": "R002", "query": "Predict my heating consumption over the next week", "label": "analysis", "difficulty": "easy", "notes": "predict keyword fires _ANALYSIS_KW"}
+{"id": "R003", "query": "Detect anomalies in my consumption over the last month", "label": "analysis", "difficulty": "easy", "notes": "anomaly keyword fires _ANALYSIS_KW"}
+{"id": "R004", "query": "Explain the anomaly detected last Tuesday", "label": "analysis", "difficulty": "easy", "notes": "anomaly keyword fires _ANALYSIS_KW"}
+{"id": "R005", "query": "What would happen if I increased heating by 20%?", "label": "analysis", "difficulty": "easy", "notes": "what-if pattern fires _ANALYSIS_KW"}
+{"id": "R006", "query": "Show me a what-if scenario where I switch off the dishwasher at peak times", "label": "analysis", "difficulty": "easy", "notes": "what-if keyword fires _ANALYSIS_KW"}
+{"id": "R007", "query": "Am I on track with my energy budget this month?", "label": "analysis", "difficulty": "easy", "notes": "budget + on track keywords fire _ANALYSIS_KW"}
+{"id": "R008", "query": "How much will my electricity bill be this quarter?", "label": "analysis", "difficulty": "easy", "notes": "bill keyword fires _ANALYSIS_KW"}
+{"id": "R009", "query": "What's causing the high consumption on weekday evenings?", "label": "analysis", "difficulty": "medium", "notes": "causal question; no direct keyword, LLM needed"}
+{"id": "R010", "query": "Generate a full energy report for the past two weeks", "label": "analysis", "difficulty": "easy", "notes": "report keyword fires _ANALYSIS_KW"}
+{"id": "R011", "query": "Would I save money switching from Economy 7 to Agile Octopus?", "label": "analysis", "difficulty": "easy", "notes": "tariff switch fires _ANALYSIS_KW"}
+{"id": "R012", "query": "Run a counterfactual: what if I set heating to 18 instead of 21?", "label": "analysis", "difficulty": "easy", "notes": "counterfactual keyword fires _ANALYSIS_KW"}
+{"id": "R013", "query": "What changes would reduce my bill by £40 a month?", "label": "analysis", "difficulty": "easy", "notes": "bill + reduce fires _ANALYSIS_KW"}
+{"id": "R014", "query": "Run a multivariate forecast using temperature and occupancy data", "label": "analysis", "difficulty": "easy", "notes": "forecast keyword fires _ANALYSIS_KW"}
+{"id": "R015", "query": "Show me the budget trajectory for the rest of the month", "label": "analysis", "difficulty": "easy", "notes": "budget keyword fires _ANALYSIS_KW"}
+{"id": "R016", "query": "Evaluate whether an EV tariff would benefit me given my usage pattern", "label": "analysis", "difficulty": "easy", "notes": "evaluate tariff fires _ANALYSIS_KW"}
+{"id": "R017", "query": "Is my energy consumption abnormal for this time of year?", "label": "analysis", "difficulty": "medium", "notes": "no direct keyword; LLM must infer anomaly/analysis intent"}
+{"id": "R018", "query": "Give me a projection of my electricity costs through summer", "label": "analysis", "difficulty": "easy", "notes": "projection keyword fires _ANALYSIS_KW"}
+{"id": "R019", "query": "Explain what's driving my winter heating costs", "label": "analysis", "difficulty": "medium", "notes": "causal attribution; explain keyword alone is medium"}
+{"id": "R020", "query": "Compare my current tariff against the variable rate — would I save?", "label": "analysis", "difficulty": "easy", "notes": "compare tariff fires _ANALYSIS_KW"}
+{"id": "R021", "query": "What is the ECO4 scheme and am I eligible?", "label": "knowledge", "difficulty": "easy", "notes": "eco4 keyword fires _KNOWLEDGE_KW"}
+{"id": "R022", "query": "How does the Boiler Upgrade Scheme work?", "label": "knowledge", "difficulty": "easy", "notes": "bus scheme fires _KNOWLEDGE_KW"}
+{"id": "R023", "query": "What is Economy 7 electricity and how does it work?", "label": "knowledge", "difficulty": "easy", "notes": "economy 7 fires _KNOWLEDGE_KW"}
+{"id": "R024", "query": "Explain how Agile Octopus pricing works", "label": "knowledge", "difficulty": "easy", "notes": "agile octopus fires _KNOWLEDGE_KW"}
+{"id": "R025", "query": "What does EPC rating mean for my property?", "label": "knowledge", "difficulty": "easy", "notes": "epc fires _KNOWLEDGE_KW"}
+{"id": "R026", "query": "What grants are available for heat pump installation?", "label": "knowledge", "difficulty": "easy", "notes": "heat pump + grant fire _KNOWLEDGE_KW"}
+{"id": "R027", "query": "What is the Ofgem price cap and how does it affect my bill?", "label": "knowledge", "difficulty": "easy", "notes": "ofgem fires _KNOWLEDGE_KW"}
+{"id": "R028", "query": "How does a smart meter help save energy?", "label": "knowledge", "difficulty": "easy", "notes": "smart meter fires _KNOWLEDGE_KW"}
+{"id": "R029", "query": "What insulation options are available under ECO4?", "label": "knowledge", "difficulty": "easy", "notes": "eco4 fires _KNOWLEDGE_KW"}
+{"id": "R030", "query": "What is the standing charge on my electricity bill?", "label": "knowledge", "difficulty": "easy", "notes": "standing charge fires _KNOWLEDGE_KW"}
+{"id": "R031", "query": "Is there VAT on my energy bill?", "label": "knowledge", "difficulty": "easy", "notes": "vat fires _KNOWLEDGE_KW"}
+{"id": "R032", "query": "What is the SEG scheme for solar panel owners?", "label": "knowledge", "difficulty": "easy", "notes": "seg scheme fires _KNOWLEDGE_KW"}
+{"id": "R033", "query": "Does ECO4 cover Scotland differently from England?", "label": "knowledge", "difficulty": "medium", "notes": "eco4 fires keyword; Scotland differentiation is a nuanced knowledge question"}
+{"id": "R034", "query": "What are the MEES regulations for landlords?", "label": "knowledge", "difficulty": "medium", "notes": "no keyword match; LLM must classify as knowledge"}
+{"id": "R035", "query": "What assistance might be available to improve my older property's insulation?", "label": "knowledge", "difficulty": "hard", "notes": "no keyword match; could be analysis; LLM must recognize as regulatory knowledge"}
+{"id": "R036", "query": "Can you explain what rebate schemes exist for replacing my boiler?", "label": "knowledge", "difficulty": "easy", "notes": "rebate fires _KNOWLEDGE_KW"}
+{"id": "R037", "query": "What is a heat pump and is it cheaper than gas?", "label": "knowledge", "difficulty": "easy", "notes": "heat pump fires _KNOWLEDGE_KW"}
+{"id": "R038", "query": "How do I apply for a smart meter installation?", "label": "knowledge", "difficulty": "easy", "notes": "smart meter fires _KNOWLEDGE_KW"}
+{"id": "R039", "query": "What does 'carbon intensity' mean for the national grid?", "label": "knowledge", "difficulty": "medium", "notes": "no keyword; LLM classifies as knowledge about grid operation"}
+{"id": "R040", "query": "Is my supplier obligated to offer me a smart meter?", "label": "knowledge", "difficulty": "hard", "notes": "no keyword; regulatory question requires LLM; could trip up smaller models"}
+{"id": "R041", "query": "Turn off the heating now", "label": "control", "difficulty": "easy", "notes": "turn off fires _CONTROL_KW"}
+{"id": "R042", "query": "Set the thermostat to 19 degrees", "label": "control", "difficulty": "easy", "notes": "setpoint fires _CONTROL_KW"}
+{"id": "R043", "query": "Turn on the dishwasher", "label": "control", "difficulty": "easy", "notes": "turn on fires _CONTROL_KW"}
+{"id": "R044", "query": "Schedule the washing machine to run at 11pm tonight", "label": "control", "difficulty": "easy", "notes": "schedule fires _CONTROL_KW (via agent dispatch)"}
+{"id": "R045", "query": "Switch off all appliances in standby", "label": "control", "difficulty": "easy", "notes": "switch off fires _CONTROL_KW"}
+{"id": "R046", "query": "Set the heating to come on at 6am tomorrow morning", "label": "control", "difficulty": "easy", "notes": "setpoint context fires _CONTROL_KW"}
+{"id": "R047", "query": "Boost the hot water cylinder for 30 minutes", "label": "control", "difficulty": "easy", "notes": "boost fires _CONTROL_KW"}
+{"id": "R048", "query": "Defer my EV charging until after 11pm", "label": "control", "difficulty": "easy", "notes": "defer fires _CONTROL_KW"}
+{"id": "R049", "query": "Cancel the heating schedule for tonight", "label": "control", "difficulty": "easy", "notes": "cancel schedule fires _CONTROL_KW"}
+{"id": "R050", "query": "Switch on the garden lights for 2 hours", "label": "control", "difficulty": "easy", "notes": "switch on fires _CONTROL_KW"}
+{"id": "R051", "query": "Lower the bedroom temperature to 17°C", "label": "control", "difficulty": "medium", "notes": "temperature context; no direct keyword; LLM needed"}
+{"id": "R052", "query": "I'd like the dishwasher to run during off-peak hours", "label": "control", "difficulty": "hard", "notes": "no keyword; intent is a schedule command; hard for small models"}
+{"id": "R053", "query": "Make the house warmer", "label": "control", "difficulty": "hard", "notes": "implicit setpoint request; no keyword; very ambiguous"}
+{"id": "R054", "query": "Please charge the battery storage now", "label": "control", "difficulty": "medium", "notes": "charge now fires _CONTROL_KW"}
+{"id": "R055", "query": "Turn the TV smart plug off at midnight", "label": "control", "difficulty": "easy", "notes": "turn off fires _CONTROL_KW"}
+{"id": "R056", "query": "What's my current electricity usage right now?", "label": "status", "difficulty": "easy", "notes": "right now fires _STATUS_KW"}
+{"id": "R057", "query": "How much am I spending on energy today in real-time?", "label": "status", "difficulty": "easy", "notes": "real-time fires _STATUS_KW"}
+{"id": "R058", "query": "What's the live carbon intensity for my region?", "label": "status", "difficulty": "easy", "notes": "live reading fires _STATUS_KW"}
+{"id": "R059", "query": "Show me recent anomaly events that were detected", "label": "status", "difficulty": "easy", "notes": "recent events fires _STATUS_KW"}
+{"id": "R060", "query": "What appliances are on right now?", "label": "status", "difficulty": "easy", "notes": "right now fires _STATUS_KW"}
+{"id": "R061", "query": "How much have I spent on energy so far this week?", "label": "status", "difficulty": "easy", "notes": "spend so far fires _STATUS_KW"}
+{"id": "R062", "query": "Is my monitoring system currently active?", "label": "status", "difficulty": "easy", "notes": "monitoring status fires _STATUS_KW"}
+{"id": "R063", "query": "Give me the latest reading from my electricity meter", "label": "status", "difficulty": "easy", "notes": "latest reading fires _STATUS_KW"}
+{"id": "R064", "query": "What happened in the last hour of sensor readings?", "label": "status", "difficulty": "medium", "notes": "partial keyword match; LLM needed for full confidence"}
+{"id": "R065", "query": "What is my current tariff rate per kWh?", "label": "status", "difficulty": "hard", "notes": "no status keyword; could be confused with knowledge; requires LLM"}
+{"id": "R066", "query": "What events has the system detected today?", "label": "status", "difficulty": "medium", "notes": "recent events partial match; LLM helps"}
+{"id": "R067", "query": "How much energy am I consuming at this moment?", "label": "status", "difficulty": "easy", "notes": "how much using fires _STATUS_KW"}
+{"id": "R068", "query": "What's my current budget status — am I over or under?", "label": "status", "difficulty": "medium", "notes": "current reading partial; budget threshold ambiguous with analysis"}
+{"id": "R069", "query": "Show me live consumption data", "label": "status", "difficulty": "medium", "notes": "no direct keyword; LLM must recognize live data request"}
+{"id": "R070", "query": "What alerts have fired today?", "label": "status", "difficulty": "hard", "notes": "no keyword; requires LLM to map 'alerts' to monitoring status"}
+{"id": "R071", "query": "Tell me about my energy", "label": "analysis", "difficulty": "hard", "notes": "maximally ambiguous; assigned analysis as default broad enquiry"}
+{"id": "R072", "query": "What's my heating doing?", "label": "status", "difficulty": "hard", "notes": "could be control-check or status; current live reading intent"}
+{"id": "R073", "query": "Give me an energy report", "label": "analysis", "difficulty": "hard", "notes": "report keyword fires _ANALYSIS_KW; but phrasing is generic"}
+{"id": "R074", "query": "Is my bill high?", "label": "analysis", "difficulty": "hard", "notes": "cost analysis intent; no keyword; small models may say knowledge"}
+{"id": "R075", "query": "What should I do about my electricity?", "label": "knowledge", "difficulty": "hard", "notes": "advice request; no keyword; LLM must distinguish advice (knowledge) vs analysis"}

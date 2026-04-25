@@ -33,12 +33,12 @@ def synthesize(query: str, chunks: List[Dict[str, Any]]) -> str:
 
     context_parts = []
     sources_seen: set[str] = set()
-    for i, chunk in enumerate(chunks, 1):
+    for i, chunk in enumerate(chunks[:3], 1):
         meta = chunk.get("meta", {})
         url = meta.get("url", "")
         source_id = chunk.get("source_id", "")
         text = chunk.get("text", "")
-        context_parts.append(f"[{i}] {text[:800]}")
+        context_parts.append(f"[{i}] {text[:400]}")
         if url and url not in sources_seen:
             sources_seen.add(url)
 
