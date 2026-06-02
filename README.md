@@ -145,6 +145,17 @@ RANDOM_SEED=42                     # In .env, used by all stochastic models
 ## Note
 This project was developed when llama 3.3-70B was available as a free tier model on Cerebras but they have since restricted their free tier, so I recommend Openrouter with meta-llama/llama-3.3-70b-instruct. It is significantly slower than the Cerebras model calls but performs decently.
 
+## Cite using
+```bash
+@inproceedings{
+fale2026energyx,
+title={EnergyX: An Agentic Framework for Explainable Energy Forecasting and Anomaly Detection},
+author={Sanyat Fale and Naman Srivastava and Pandarasamy Arjunan},
+booktitle={1st ICLR Workshop on Time Series in the Age of Large Models},
+year={2026},
+url={https://openreview.net/forum?id=vqCtn8RTxY}
+}
+```
 ## License
 
 MIT
